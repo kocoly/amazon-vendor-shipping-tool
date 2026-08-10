@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>跨境货件协同与四表联动系统</title>
+  <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif; background: #f4f6f8; color: #333; margin: 0; padding: 20px; }
+    .container { max-width: 1400px; margin: 0 auto; }
+    .card { background: #fff; border-radius: 8px; padding: 20px; margin-bottom: 20px; box-shadow: 0 2px 6px rgba(0,0,0,0.05); }
+    h2 { margin-top: 0; font-size: 1.15rem; color: #111; border-bottom: 2px solid #f0f0f0; padding-bottom: 10px; }
+    
+    .btn { background: #0066ff; color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; font-weight: 600; }
+    .btn:hover { background: #0052cc; }
+    .btn-success { background: #28a745; }
+    .btn-success:hover { background: #218838; }
+    .btn-danger { background: #dc3545; color:white; border:none; border-radius:4px; padding: 4px 8px; font-size: 0.8rem; cursor:pointer;}
+    .btn-edit { background: #ffc107; color: #000; border:none; border-radius:4px; padding: 4px 8px; font-size: 0.8rem; margin-right: 4px; cursor:pointer;}
+    .btn-outline { background: transparent; color: #666; border: 1px solid #ccc; }
+    .btn-outline:hover { background: #eee; }
+    
+    input[type="text"], input[type="number"], textarea { padding: 8px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; }
+    textarea { width: 100%; height: 70px; resize: vertical; }
+
+    .tab-container { display: flex; border-bottom: 2px solid #0066ff; margin-bottom: 15px; }
+    .tab-btn { background: #e9ecef; border: none; padding: 10px 20px; cursor: pointer; font-weight: 600; margin-right: 2px; border-radius: 6px 6px 0 0; }
+    .tab-btn.active { background: #0066ff; color: white; }
+
+    .table-box { max-height: 450px; overflow: auto; border: 1px solid #e0e0e0; background: #fff; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.82rem; text-align: left; }
+    th { background: #f8f9fa; position: sticky; top: 0; padding: 10px; border-bottom: 2px solid #dee2e6; white-space: nowrap; z-index: 10; }
+    td { padding: 8px 10px; border-bottom: 1px solid #eee; white-space: pre-wrap; word-break: break-all; }
+    tr:hover { background: #f1f7ff; }
+
+    .modal { display: none; position: fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); align-items:center; justify-content:center; z-index:1000; }
+    .modal-content { background:#fff; padding:20px; border-radius:8px; width:420px; }
+    .form-group { margin-bottom:12px; }
+    .form-group label { display:block; margin-bottom:4px; font-size:0.85rem; font-weight:600; }
+    .form-group input { width:100%; }
+  </style>
+</head>
+<body>
+
+<div class="container">
+  <h1>跨境货件协同与四表联动系统</h1>
+
+  <!-- 1. 箱规数据库 CRUD 管理卡片 -->
+  <div class="card">
+    <h2>📦 箱规数据库管理 (已载入图片中 38 款产品数据)</h2>
+    <div style="display: flex; gap: 10px; margin-bottom: 10px;">
+      <input type="text" id="searchAsinInput" placeholder="输入 ASIN 或品名关键字搜索..." oninput="searchBoxSpecs()" style="flex: 1;" />
+      <button class="btn" onclick="openAddSpecModal()">+ 新增箱规</button>
+      <button class="btn btn-success" onclick="exportSpecsToExcel()">导出箱规库 Excel</button>
+      <button class="btn btn-outline" onclick="resetDefaultDB()">重置默认箱规</button>
+    </div>
+    <div class="table-box" style="max-height: 250px;">
+      <table>
+        <thead>
+          <tr>
+            <th>品名</th>
+            <th>ASIN</th>
+            <th>单箱数量</th>
+            <th>单箱体积 (CBF)</th>
+            <th>单箱重量 (LB)</th>
+            <th>操作</th>
+          </tr>
+        </thead>
+        <tbody id="specTableBody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- 2. 数据导入与解析控制面板 -->
+  <div class="card">
+    <h2>🚀 货件协同数据处理</h2>
+    <div style="margin-bottom: 12px;">
+      <label><b>1. 选择 Amazon Vendor Central 导出的数据 Excel:</b></label>
+      <input type="file" id="excelFileInput" accept=".xlsx, .xls, .csv" />
+    </div>
+    <div style="margin-bottom: 12px;">
+      <label><b>2. 粘贴 Edit shipment / POs / ARN 原始文本 (自动提取 ARN):</b></label>
+      <textarea id="arnText" placeholder="在此粘贴包含 Edit shipment X / POs / ARN 的文本..."></textarea>
+    </div>
+    <div style="display: flex; gap: 10px;">
+      <button class="btn" onclick="processShippingData()">⚡ 一键匹配并生成 4 个数据表</button>
+      <button class="btn btn-success" id="downloadAllBtn" style="display:none;" onclick="exportAllTablesToExcel()">📥 下载包含所有 Sheet 的 Excel</button>
+    </div>
+  </div>
+
+  <!-- 3. 多表页签数据预览区 -->
+  <div class="card" id="resultCard" style="display: none;">
+    <h2>📊 生成表格预览</h2>
+    <div class="tab-container">
+      <button class="tab-btn active" onclick="switchTab('tabSummary', this)">总表</button>
+      <button class="tab-btn" onclick="switchTab('tabTable1', this)">表一</button>
+      <button class="tab-btn" onclick="switchTab('tabTable2', this)">表二</button>
+      <button class="tab-btn" onclick="switchTab('tabInit', this)">初始数据</button>
+    </div>
+
+    <div id="tabSummary" class="tab-content"><div class="table-box"><table id="tableSummary"></table></div></div>
+    <div id="tabTable1" class="tab-content" style="display:none;"><div class="table-box"><table id="table1"></table></div></div>
+    <div id="tabTable2" class="tab-content" style="display:none;"><div class="table-box"><table id="table2"></table></div></div>
+    <div id="tabInit" class="tab-content" style="display:none;"><div class="table-box"><table id="tableInit"></table></div></div>
+  </div>
+</div>
+
+<!-- 箱规编辑/新增 弹窗 -->
+<div class="modal" id="specModal">
+  <div class="modal-content">
+    <h3 id="modalTitle">新增箱规</h3>
+    <div class="form-group"><label>品名</label><input type="text" id="modalName" placeholder="如：套装 三脚架A 黑I UB" /></div>
+    <div class="form-group"><label>ASIN</label><input type="text" id="modalAsin" placeholder="如：B088GNC6TT" /></div>
+    <div class="form-group"><label>单箱数量 (PCS)</label><input type="number" id="modalPcs" /></div>
+    <div class="form-group"><label>单箱体积 (CBF)</label><input type="number" step="0.00000001" id="modalVol" /></div>
+    <div class="form-group"><label>单箱重量 (LB)</label><input type="number" step="0.01" id="modalWeight" /></div>
+    <div style="text-align: right; margin-top: 15px;">
+      <button class="btn" style="background:#ccc;" onclick="closeSpecModal()">取消</button>
+      <button class="btn" onclick="saveSpec()">保存</button>
+    </div>
+  </div>
+</div>
+
+<script src="app.min.js"></script>
+</body>
+</html>
