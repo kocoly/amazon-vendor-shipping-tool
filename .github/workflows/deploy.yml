@@ -1,0 +1,33 @@
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches:
+      - main  # 每次向 main 分支提交代码时自动触发
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Terser (JS 压缩混淆工具)
+        run: npm install -g terser
+
+      - name: Auto minify JS (自动把 src/app.js 混淆压缩为 app.min.js)
+        run: |
+          if [ -f "src/app.js" ]; then
+            terser src/app.js -o app.min.js --compress --mangle
+          fi
+
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./  # 部署当前根目录的所有静态文件
