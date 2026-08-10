@@ -3,13 +3,26 @@ name: Deploy to GitHub Pages
 on:
   push:
     branches:
-      - main  # 每次向 main 分支提交代码时自动触发
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
 
 jobs:
   deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
+      - name: Checkout
         uses: actions/checkout@v4
 
       - name: Setup Node.js
@@ -17,17 +30,23 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Install Terser (JS 压缩混淆工具)
+      - name: Install Terser (压缩工具)
         run: npm install -g terser
 
-      - name: Auto minify JS (自动把 src/app.js 混淆压缩为 app.min.js)
+      - name: Auto Build app.min.js (自动根据源码压缩生成 app.min.js)
         run: |
           if [ -f "src/app.js" ]; then
             terser src/app.js -o app.min.js --compress --mangle
           fi
 
-      - name: Deploy to GitHub Pages
-        uses: peaceiris/actions-gh-pages@v3
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
         with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./  # 部署当前根目录的所有静态文件
+          path: '.'
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
