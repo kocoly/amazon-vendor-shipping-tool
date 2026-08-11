@@ -1,15 +1,24 @@
 const esbuild = require('esbuild');
 const fs = require('fs-extra');
+const path = require('path');
 
 async function runBuild() {
     try {
-        // 1. 清理并重建 dist 输出目录
+        // 1. 检查源码路径是否存在
+        const srcHtmlPath = path.join(__dirname, 'src/index.html');
+        const srcAppPath = path.join(__dirname, 'src/app.js');
+
+        if (!fs.existsSync(srcHtmlPath) || !fs.existsSync(srcAppPath)) {
+            throw new Error(`找不到源码文件，请确保 src/index.html 和 src/app.js 存在于项目根目录下！`);
+        }
+
+        // 2. 清理并创建 dist 目录
         if (fs.existsSync('dist')) {
             fs.rmSync('dist', { recursive: true, force: true });
         }
         fs.mkdirSync('dist');
 
-        // 2. 打包并压缩 src/app.js 为 dist/app.min.js
+        // 3. 执行 esbuild 打包
         await esbuild.build({
             entryPoints: ['src/app.js'],
             bundle: true,
@@ -19,14 +28,20 @@ async function runBuild() {
             outfile: 'dist/app.min.js',
         });
 
-        // 3. 读取 src/index.html，修改引用路径后输出到 dist/index.html
-        let html = fs.readFileSync('src/index.html', 'utf8');
+        // 4. 处理并复制 HTML
+        let html = fs.readFileSync(srcHtmlPath, 'utf8');
         html = html.replace('src/app.js', 'app.min.js');
-        fs.writeFileSync('dist/index.html', html);
+        fs.writeFileSync(path.join(__dirname, 'dist/index.html'), html);
 
-        console.log('⚡ [Success] Amazon Vendor 工具构建完成！已输出至 dist/ 目录。');
+        console.log('⚡ [Success] 构建完成！已成功输出至 dist/ 目录。');
     } catch (error) {
-        console.error('❌ [Error] 构建失败:', error);
+        console.error('❌ [Error] 构建步骤抛出错误:');
+        // 如果是 esbuild 专有的编译错误，打印详细的 errors 数组
+        if (error.errors && error.errors.length > 0) {
+            console.error(JSON.stringify(error.errors, null, 2));
+        } else {
+            console.error(error.message || error);
+        }
         process.exit(1);
     }
 }
