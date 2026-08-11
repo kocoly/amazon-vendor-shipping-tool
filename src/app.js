@@ -26,24 +26,32 @@ function renderSpecTable(data = boxSpecs) {
             <td>${item.vol}</td>
             <td>${item.weight}</td>
             <td>
-                <button class="btn btn-edit" onclick="window.openEditSpecModal('${item.asin}')">编辑</button>
-                <button class="btn btn-danger" onclick="window.deleteSpec('${item.asin}')">删除</button>
+                <button class="btn btn-edit btn-edit-spec" data-asin="${escapeHtml(item.asin)}">编辑</button>
+                <button class="btn btn-danger btn-del-spec" data-asin="${escapeHtml(item.asin)}">删除</button>
             </td>
         `;
         tbody.appendChild(tr);
     });
+
+    // 动态绑定操作列按钮事件
+    tbody.querySelectorAll('.btn-edit-spec').forEach(btn => {
+        btn.addEventListener('click', (e) => openEditSpecModal(e.target.dataset.asin));
+    });
+    tbody.querySelectorAll('.btn-del-spec').forEach(btn => {
+        btn.addEventListener('click', (e) => deleteSpec(e.target.dataset.asin));
+    });
 }
 
-window.searchBoxSpecs = function() {
+function searchBoxSpecs() {
     const query = document.getElementById('searchAsinInput').value.toLowerCase().trim();
     const filtered = boxSpecs.filter(item => 
         (item.name && item.name.toLowerCase().includes(query)) || 
         item.asin.toLowerCase().includes(query)
     );
     renderSpecTable(filtered);
-};
+}
 
-window.openAddSpecModal = function() {
+function openAddSpecModal() {
     editingAsin = null;
     document.getElementById('modalTitle').innerText = '新增箱规';
     document.getElementById('modalName').value = '';
@@ -53,9 +61,9 @@ window.openAddSpecModal = function() {
     document.getElementById('modalVol').value = '';
     document.getElementById('modalWeight').value = '';
     document.getElementById('specModal').style.display = 'flex';
-};
+}
 
-window.openEditSpecModal = function(asin) {
+function openEditSpecModal(asin) {
     const target = boxSpecs.find(item => item.asin === asin);
     if (!target) return;
     editingAsin = asin;
@@ -67,13 +75,13 @@ window.openEditSpecModal = function(asin) {
     document.getElementById('modalVol').value = target.vol;
     document.getElementById('modalWeight').value = target.weight;
     document.getElementById('specModal').style.display = 'flex';
-};
+}
 
-window.closeSpecModal = function() {
+function closeSpecModal() {
     document.getElementById('specModal').style.display = 'none';
-};
+}
 
-window.saveSpec = function() {
+function saveSpec() {
     const asin = document.getElementById('modalAsin').value.trim();
     const name = document.getElementById('modalName').value.trim();
     const pcs = parseInt(document.getElementById('modalPcs').value, 10);
@@ -98,39 +106,39 @@ window.saveSpec = function() {
 
     saveSpecsToStorage();
     renderSpecTable();
-    window.closeSpecModal();
-};
+    closeSpecModal();
+}
 
-window.deleteSpec = function(asin) {
+function deleteSpec(asin) {
     if (confirm(`确定要删除 ASIN: ${asin} 的箱规配置吗？`)) {
         boxSpecs = boxSpecs.filter(item => item.asin !== asin);
         saveSpecsToStorage();
         renderSpecTable();
     }
-};
+}
 
-window.resetDefaultDB = function() {
+function resetDefaultDB() {
     if (confirm('确定要重置箱规数据库吗？')) {
         boxSpecs = [...DEFAULT_SPECS];
         saveSpecsToStorage();
         renderSpecTable();
     }
-};
+}
 
-window.exportSpecsToExcel = function() {
+function exportSpecsToExcel() {
     if (typeof XLSX === 'undefined') return alert('SheetJS 组件尚未完成加载');
     const ws = XLSX.utils.json_to_sheet(boxSpecs);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "箱规数据库");
     XLSX.writeFile(wb, "Vendor_Box_Specs.xlsx");
-};
+}
 
 // ==========================================
 // 2. 货件协同数据核心算法
 // ==========================================
 let processedResult = { summary: [], table1: [], table2: [], initData: [] };
 
-window.processShippingData = async function() {
+async function processShippingData() {
     const fileInput = document.getElementById('excelFileInput');
     const files = fileInput ? fileInput.files : null;
 
@@ -165,7 +173,7 @@ window.processShippingData = async function() {
         console.error(err);
         alert('处理表格数据失败: ' + err.message);
     }
-};
+}
 
 function readExcelFile(file) {
     return new Promise((resolve, reject) => {
@@ -234,16 +242,16 @@ function calculateShippingTables(rawData, arnMapping) {
 }
 
 // ==========================================
-// 3. UI 渲染与 Tab 切换 (已解决 appendChild 报错)
+// 3. Tab 切换与表格渲染
 // ==========================================
-window.switchTab = function(tabId, btn) {
+function switchTab(tabId, btn) {
     document.querySelectorAll('.tab-content').forEach(el => el.style.display = 'none');
     document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
     
     const target = document.getElementById(tabId);
     if (target) target.style.display = 'block';
     if (btn) btn.classList.add('active');
-};
+}
 
 function renderResultTables() {
     renderHTMLTable('tableSummary', processedResult.summary);
@@ -277,7 +285,7 @@ function renderHTMLTable(containerId, data) {
 }
 
 function escapeHtml(str) {
-    return str
+    return String(str)
         .replace(/&/g, "&amp;")
         .replace(/</g, "&lt;")
         .replace(/>/g, "&gt;")
@@ -285,7 +293,7 @@ function escapeHtml(str) {
         .replace(/'/g, "&#039;");
 }
 
-window.exportAllTablesToExcel = function() {
+function exportAllTablesToExcel() {
     if (typeof XLSX === 'undefined') return alert('SheetJS 库未加载');
     const wb = XLSX.utils.book_new();
     if (processedResult.summary.length) XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(processedResult.summary), "四表汇总");
@@ -294,8 +302,29 @@ window.exportAllTablesToExcel = function() {
     if (processedResult.initData.length) XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(processedResult.initData), "初始校验数据");
 
     XLSX.writeFile(wb, "Amazon_Vendor_货件协同结果.xlsx");
-};
+}
 
-window.onload = function() {
+// ==========================================
+// 4. 事件监听器注册 (保证 DOM 加载后绑定)
+// ==========================================
+document.addEventListener('DOMContentLoaded', () => {
     renderSpecTable();
-};
+
+    // 核心按钮事件绑定
+    document.getElementById('btnProcess')?.addEventListener('click', processShippingData);
+    document.getElementById('downloadAllBtn')?.addEventListener('click', exportAllTablesToExcel);
+
+    // 箱规管理按钮绑定
+    document.getElementById('searchAsinInput')?.addEventListener('input', searchBoxSpecs);
+    document.getElementById('btnAddSpec')?.addEventListener('click', openAddSpecModal);
+    document.getElementById('btnResetDB')?.addEventListener('click', resetDefaultDB);
+    document.getElementById('btnExportSpecs')?.addEventListener('click', exportSpecsToExcel);
+    document.getElementById('btnCloseModal')?.addEventListener('click', closeSpecModal);
+    document.getElementById('btnSaveSpec')?.addEventListener('click', saveSpec);
+
+    // Tab 切换按钮绑定
+    document.getElementById('btnTabSummary')?.addEventListener('click', (e) => switchTab('tabSummary', e.target));
+    document.getElementById('btnTabTable1')?.addEventListener('click', (e) => switchTab('tabTable1', e.target));
+    document.getElementById('btnTabTable2')?.addEventListener('click', (e) => switchTab('tabTable2', e.target));
+    document.getElementById('btnTabInit')?.addEventListener('click', (e) => switchTab('tabInit', e.target));
+});
