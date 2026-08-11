@@ -68,27 +68,27 @@
         </div>
         <div class="step-container">
             <div class="step-box">
-                <div class="step-title">步骤 1：导入 Amazon Vendor Central 导出的 PO 数据</div>
+                <label for="excelFileInput" class="step-title" style="display:block; cursor:pointer;">步骤 1：导入 Amazon Vendor Central 导出的 PO 数据</label>
                 <input type="file" id="excelFileInput" multiple accept=".xlsx, .xls, .csv">
                 <span style="font-size: 0.75rem; color: var(--text-muted); display:block; margin-top:4px;">* 可按住 Ctrl 多选多个表格文件合并解析</span>
             </div>
             <div class="step-box">
-                <div class="step-title">步骤 2：补充 Edit shipment / POs / ARN 原始文本 (可选)</div>
+                <label for="arnText" class="step-title" style="display:block; cursor:pointer;">步骤 2：补充 Edit shipment / POs / ARN 原始文本 (可选)</label>
                 <textarea id="arnText" placeholder="若已有 ARN/Shipment 文本请在此粘贴；若尚未创建货件，可留空直接生成预约表一/表二..."></textarea>
             </div>
         </div>
         <div class="action-bar">
-            <button class="btn btn-primary" onclick="window.processShippingData()">⚡ 开始协同计算 / 更新数据</button>
-            <button class="btn btn-success" id="downloadAllBtn" style="display:none;" onclick="window.exportAllTablesToExcel()">📥 导出四表汇总结果 (Excel)</button>
+            <button class="btn btn-primary" id="btnProcess">⚡ 开始协同计算 / 更新数据</button>
+            <button class="btn btn-success" id="downloadAllBtn" style="display:none;">📥 导出四表汇总结果 (Excel)</button>
         </div>
     </div>
 
     <div class="card" id="resultCard" style="display: none;">
         <div class="tab-menu">
-            <button class="tab-btn active" onclick="window.switchTab('tabSummary', this)">四表汇总 (总表)</button>
-            <button class="tab-btn" onclick="window.switchTab('tabTable1', this)">表一 (Shipment 分配表)</button>
-            <button class="tab-btn" onclick="window.switchTab('tabTable2', this)">表二 (预约汇总表)</button>
-            <button class="tab-btn" onclick="window.switchTab('tabInit', this)">初始校验数据</button>
+            <button class="tab-btn active" id="btnTabSummary">四表汇总 (总表)</button>
+            <button class="tab-btn" id="btnTabTable1">表一 (Shipment 分配表)</button>
+            <button class="tab-btn" id="btnTabTable2">表二 (预约汇总表)</button>
+            <button class="tab-btn" id="btnTabInit">初始校验数据</button>
         </div>
         <div id="tabSummary" class="tab-content"><div class="table-container" id="tableSummary"></div></div>
         <div id="tabTable1" class="tab-content" style="display: none;"><div class="table-container" id="table1"></div></div>
@@ -100,10 +100,11 @@
         <div class="card-header">
             <span>📦 箱规数据库配置</span>
             <div style="display:flex; gap:10px;">
-                <input type="text" id="searchAsinInput" class="search-input" placeholder="搜索 ASIN 或 品名..." oninput="window.searchBoxSpecs()">
-                <button class="btn btn-secondary" onclick="window.openAddSpecModal()">➕ 新增箱规</button>
-                <button class="btn btn-secondary" onclick="window.resetDefaultDB()">🔄 恢复默认</button>
-                <button class="btn btn-secondary" onclick="window.exportSpecsToExcel()">📥 备份箱规</button>
+                <label for="searchAsinInput" style="display:none;">搜索箱规</label>
+                <input type="text" id="searchAsinInput" class="search-input" placeholder="搜索 ASIN 或 品名...">
+                <button class="btn btn-secondary" id="btnAddSpec">➕ 新增箱规</button>
+                <button class="btn btn-secondary" id="btnResetDB">🔄 恢复默认</button>
+                <button class="btn btn-secondary" id="btnExportSpecs">📥 备份箱规</button>
             </div>
         </div>
         <div class="table-container">
@@ -120,19 +121,33 @@
 <div class="modal" id="specModal">
     <div class="modal-content">
         <div class="modal-header" id="modalTitle" style="font-weight:600; margin-bottom:12px;">新增箱规</div>
-        <div class="form-group"><label>品名</label><input type="text" id="modalName"></div>
-        <div class="form-group"><label>ASIN *</label><input type="text" id="modalAsin"></div>
-        <div class="form-group"><label>单箱 PCS *</label><input type="number" id="modalPcs"></div>
-        <div class="form-group"><label>单箱体积 (cuFt) *</label><input type="number" step="0.01" id="modalVol"></div>
-        <div class="form-group"><label>单箱重量 (lbs) *</label><input type="number" step="0.01" id="modalWeight"></div>
+        <div class="form-group">
+            <label for="modalName">品名</label>
+            <input type="text" id="modalName">
+        </div>
+        <div class="form-group">
+            <label for="modalAsin">ASIN *</label>
+            <input type="text" id="modalAsin">
+        </div>
+        <div class="form-group">
+            <label for="modalPcs">单箱 PCS *</label>
+            <input type="number" id="modalPcs">
+        </div>
+        <div class="form-group">
+            <label for="modalVol">单箱体积 (cuFt) *</label>
+            <input type="number" step="0.01" id="modalVol">
+        </div>
+        <div class="form-group">
+            <label for="modalWeight">单箱重量 (lbs) *</label>
+            <input type="number" step="0.01" id="modalWeight">
+        </div>
         <div class="modal-footer">
-            <button class="btn btn-secondary" onclick="window.closeSpecModal()">取消</button>
-            <button class="btn btn-primary" onclick="window.saveSpec()">保存</button>
+            <button class="btn btn-secondary" id="btnCloseModal">取消</button>
+            <button class="btn btn-primary" id="btnSaveSpec">保存</button>
         </div>
     </div>
 </div>
 
-<!-- 本地开发引用 src/app.js，构建后 build.js 会自动修改为 app.min.js -->
 <script src="src/app.js"></script>
 </body>
 </html>
