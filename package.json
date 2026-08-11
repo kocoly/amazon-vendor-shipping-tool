@@ -1,0 +1,13 @@
+{
+  "name": "amazon-vendor-shipping-tool",
+  "version": "1.0.0",
+  "description": "Amazon Vendor 货件协同处理工具",
+  "private": true,
+  "scripts": {
+    "build": "node build.js"
+  },
+  "devDependencies": {
+    "esbuild": "^0.20.0",
+    "fs-extra": "^11.2.0"
+  }
+}
