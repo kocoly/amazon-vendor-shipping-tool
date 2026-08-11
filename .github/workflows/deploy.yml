@@ -5,6 +5,10 @@ on:
     branches:
       - main
 
+# 给 Actions 声明对仓库内容的写权限
+permissions:
+  contents: write
+
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
@@ -17,10 +21,9 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          # 移除 cache: 'npm' 这一行
 
       - name: Install Dependencies
-        run: npm install  # 从 npm ci 改为 npm install
+        run: npm install
 
       - name: Build Project
         run: npm run build
