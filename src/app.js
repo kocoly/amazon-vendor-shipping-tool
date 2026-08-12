@@ -1,6 +1,9 @@
 // ==========================================
-// 1. 箱规数据库管理
+// 1. 常量定义与箱规数据库管理
 // ==========================================
+const PALLET_VOL_CANADA = 68.96;       // 加拿大标准托盘容积 (cuFt)
+const MAX_WEIGHT_PER_PALLET = 1400;     // 单托盘最大载重 (lbs)
+
 const DEFAULT_SPECS = [
     { name: "示例摄影支架 A", asin: "B000XXXXX1", pcs: 20, vol: 1.5, weight: 12.5 },
     { name: "示例三脚架 B", asin: "B000XXXXX2", pcs: 10, vol: 2.1, weight: 18.0 }
@@ -182,11 +185,35 @@ function importSpecsFromExcel(file) {
 }
 
 // ==========================================
-// 辅助函数：计算 Window Start 到 Window End 范围内的周四
+// 2. 辅助计算函数 (托盘计算 & 日期推算)
 // ==========================================
-function calculateExpectedDate(windowStartStr, windowEndStr) {
-    if (!windowStartStr || !windowEndStr) return '';
 
+/**
+ * 复刻 VBA 托盘计算逻辑：
+ * 1. 箱数 <= 10 -> 托盘数 = 0
+ * 2. 箱数 > 10 -> Max(体积托盘数向上取整, 重量托盘数向上取整)
+ */
+function calculatePallets(cartonCount, totalVol, totalWt) {
+    if (cartonCount <= 10) {
+        return 0;
+    }
+    const palletsByVol = Math.ceil(totalVol / PALLET_VOL_CANADA);
+    const palletsByWt = Math.ceil(totalWt / MAX_WEIGHT_PER_PALLET);
+    return Math.max(palletsByVol, palletsByWt);
+}
+
+/**
+ * 自动计算窗口范围内的周四作为提货日期（或进行格式标准化）
+ */
+function calculateExpectedDate(windowStartStr, windowEndStr, expectDateStr) {
+    if (expectDateStr) {
+        const d = new Date(expectDateStr);
+        if (!isNaN(d.getTime())) {
+            return `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()}`;
+        }
+    }
+
+    if (!windowStartStr || !windowEndStr) return '';
     let start = new Date(windowStartStr);
     let end = new Date(windowEndStr);
 
@@ -195,10 +222,7 @@ function calculateExpectedDate(windowStartStr, windowEndStr) {
     let curr = new Date(start);
     while (curr <= end) {
         if (curr.getDay() === 4) { // 周四
-            const y = curr.getFullYear();
-            const m = curr.getMonth() + 1;
-            const d = curr.getDate();
-            return `${y}/${m}/${d}`;
+            return `${curr.getFullYear()}/${curr.getMonth() + 1}/${curr.getDate()}`;
         }
         curr.setDate(curr.getDate() + 1);
     }
@@ -206,7 +230,7 @@ function calculateExpectedDate(windowStartStr, windowEndStr) {
 }
 
 // ==========================================
-// 2. 货件协同数据核心算法
+// 3. 货件协同数据处理核心引擎 (融合 VBA 逻辑)
 // ==========================================
 let processedResult = { summary: [], table1: [], table2: [], initData: [] };
 
@@ -279,65 +303,42 @@ function parseArnText(text) {
 }
 
 function calculateShippingTables(rawDataFiles, arnMapping) {
-    let poConfirmRows = [];
-    let caPoRows = [];
-
-    rawDataFiles.forEach(fileObj => {
-        const rows = fileObj.data;
-        if (!rows || rows.length === 0) return;
-
-        const sampleKeys = Object.keys(rows[0]).map(k => k.trim().toLowerCase());
-        if (sampleKeys.includes('ship-to location') || sampleKeys.includes('window start')) {
-            poConfirmRows = poConfirmRows.concat(rows);
-        } else {
-            caPoRows = caPoRows.concat(rows);
+    let allRows = [];
+    rawDataFiles.forEach(f => {
+        if (f.data && f.data.length > 0) {
+            allRows = allRows.concat(f.data);
         }
     });
 
-    if (caPoRows.length === 0 && poConfirmRows.length > 0) {
-        caPoRows = poConfirmRows;
+    if (allRows.length === 0) {
+        alert('没有读取到有效的表格行数据！');
+        return;
     }
 
-    const poConfirmMap = new Map();
-    poConfirmRows.forEach(row => {
-        const lowerRow = {};
-        Object.keys(row).forEach(k => lowerRow[k.trim().toLowerCase()] = row[k]);
+    // ----------------------------------------------------
+    // 第一步：数据解析与预处理（计算单行的箱数、重量、体积）
+    // ----------------------------------------------------
+    let normalizedRows = [];
 
-        const po = String(lowerRow['po'] || lowerRow['purchase order'] || lowerRow['po number'] || '').trim();
-        const asin = String(lowerRow['asin'] || lowerRow['item'] || '').trim();
-
-        if (po && asin) {
-            const key = `${po}_${asin}`;
-            poConfirmMap.set(key, {
-                shipToLocation: lowerRow['ship-to location'] || lowerRow['destination'] || lowerRow['po destination'] || '',
-                windowStart: lowerRow['window start'] || '',
-                windowEnd: lowerRow['window end'] || ''
-            });
-        }
-    });
-
-    // 1. 基础校验数据表
-    let initDataList = [];
-    let shipmentSet = new Set();
-
-    caPoRows.forEach(row => {
+    allRows.forEach((row, index) => {
         const lowerRow = {};
         Object.keys(row).forEach(k => lowerRow[k.trim().toLowerCase()] = row[k]);
 
         const po = String(lowerRow['po'] || lowerRow['purchase order'] || lowerRow['po number'] || '').trim();
         const asin = String(lowerRow['asin'] || lowerRow['item'] || lowerRow['asin/msku'] || '').trim();
-        const pcs = parseInt(lowerRow['pcs'] || lowerRow['quantity'] || lowerRow['qty'] || 0, 10);
-        const confirmQty = parseInt(lowerRow['确认数量'] || lowerRow['accepted quantity'] || lowerRow['confirmed'] || pcs, 10);
-        const warehouse = String(lowerRow['仓库'] || lowerRow['warehouse'] || lowerRow['pick up location'] || '').trim();
 
-        const poKey = `${po}_${asin}`;
-        const confirmInfo = poConfirmMap.get(poKey) || {};
+        if (!po && !asin) return; // 过滤空行
 
-        const shipToLocation = confirmInfo.shipToLocation || lowerRow['ship-to location'] || lowerRow['po destination'] || '';
-        const windowStart = confirmInfo.windowStart || lowerRow['window start'] || '';
-        const windowEnd = confirmInfo.windowEnd || lowerRow['window end'] || '';
-        const expectedDate = calculateExpectedDate(windowStart, windowEnd) || lowerRow['requested pick up date'] || '';
+        const confirmQty = parseInt(lowerRow['确认数量'] || lowerRow['accepted quantity'] || lowerRow['confirmed'] || lowerRow['pcs'] || lowerRow['quantity'] || 0, 10);
+        const pickUpLoc = String(lowerRow['仓库'] || lowerRow['warehouse'] || lowerRow['pick up location'] || '').trim();
+        const poDestination = String(lowerRow['ship-to location'] || lowerRow['destination'] || lowerRow['po destination'] || lowerRow['desination:'] || '').trim();
 
+        const windowStart = String(lowerRow['window start'] || '').trim();
+        const windowEnd = String(lowerRow['window end'] || '').trim();
+        const rawExpect = String(lowerRow['requested pick up date'] || lowerRow['expected date'] || '').trim();
+        const expectedDate = calculateExpectedDate(windowStart, windowEnd, rawExpect);
+
+        // 获取箱规
         const spec = boxSpecs.find(s => s.asin === asin);
         const singlePcs = parseInt(lowerRow['单箱pcs'] || lowerRow['单箱 pcs'] || (spec ? spec.pcs : 0), 10);
 
@@ -357,86 +358,99 @@ function calculateShippingTables(rawDataFiles, arnMapping) {
             calculatedWeight = parseFloat(lowerRow['重量'] || lowerRow['total weight (lbs.)'] || 0);
         }
 
-        let shipmentName = arnMapping[po] || lowerRow['shipment'] || lowerRow['shipment id'] || 'Shipment 1';
-        shipmentSet.add(shipmentName);
-
-        initDataList.push({
-            'PO': po,
-            'ASIN': asin,
-            'PCS': pcs,
-            '确认数量': confirmQty,
-            '单箱PCS': singlePcs,
-            '箱数': cartons,
-            '体积': calculatedVol,
-            '重量': calculatedWeight,
-            '托盘': lowerRow['托盘'] || lowerRow['unstacked pallets'] || '',
-            '仓库': warehouse,
-            'Ship-to location': shipToLocation,
-            'window start': windowStart,
-            'window end': windowEnd,
-            'Expected date': expectedDate,
-            'Shipment': shipmentName
+        normalizedRows.push({
+            rowIndex: index + 2,
+            po,
+            asin,
+            confirmQty,
+            pickUpLoc,
+            poDestination,
+            windowStart,
+            windowEnd,
+            expectedDate,
+            cartons,
+            calculatedVol,
+            calculatedWeight
         });
     });
 
-    const shipmentList = Array.from(shipmentSet).sort();
+    // ----------------------------------------------------
+    // 第二步：根据 VBA 分组逻辑生成 Shipment
+    // 规则：Key = Warehouse + || + PO Destination
+    // 日期校验：若 Expected Date 不在 [Window Start, Window End] 区间，独立分组
+    // ----------------------------------------------------
+    let shipmentMap = new Map(); // key -> { shipmentName, id, poDestination, pickUpLoc, expectedDate, items: [] }
+    let shipmentCount = 0;
 
-    // 2. 生成【表一】：严格按照结构 [PO Number, PO Destination, ASIN/MSKU, Confirmed, Shipment 1, Shipment 2, ...]
+    normalizedRows.forEach(row => {
+        let shipmentKey = `${row.pickUpLoc}||${row.poDestination}`;
+
+        // 校验日期范围
+        if (row.windowStart && row.windowEnd && row.expectedDate) {
+            const dtStart = new Date(row.windowStart);
+            const dtEnd = new Date(row.windowEnd);
+            const dtExpect = new Date(row.expectedDate);
+
+            if (!isNaN(dtStart.getTime()) && !isNaN(dtEnd.getTime()) && !isNaN(dtExpect.getTime())) {
+                if (dtExpect < dtStart || dtExpect > dtEnd) {
+                    shipmentKey += `||ROW${row.rowIndex}`;
+                }
+            }
+        }
+
+        // 如果用户在文本框中硬编码了 ARN 映射，优先使用
+        if (arnMapping[row.po]) {
+            shipmentKey = `ARN_${arnMapping[row.po]}`;
+        }
+
+        if (!shipmentMap.has(shipmentKey)) {
+            shipmentCount++;
+            const sName = arnMapping[row.po] || `Shipment ${shipmentCount}`;
+            shipmentMap.set(shipmentKey, {
+                id: shipmentCount,
+                name: sName,
+                poDestination: row.poDestination,
+                pickUpLoc: row.pickUpLoc,
+                expectedDate: row.expectedDate,
+                items: []
+            });
+        }
+
+        const currentShipment = shipmentMap.get(shipmentKey);
+        row.shipmentName = currentShipment.name;
+        currentShipment.items.push(row);
+    });
+
+    // 提取所有生成的 Shipment 名称列表
+    const allShipments = Array.from(shipmentMap.values()).map(s => s.name);
+
+    // ----------------------------------------------------
+    // 第三步：构建【表一】矩阵表
+    // 结构：PO Number | PO Destination | ASIN/MSKU | Confirmed | Shipment 1 | Shipment 2 ...
+    // ----------------------------------------------------
     let table1List = [];
-    initDataList.forEach(item => {
+    normalizedRows.forEach(row => {
         let rowObj = {
-            'PO Number': item.PO,
-            'PO Destination': item['Ship-to location'],
-            'ASIN/MSKU': item.ASIN,
-            'Confirmed': item['确认数量']
+            'PO Number': row.po,
+            'PO Destination': row.poDestination,
+            'ASIN/MSKU': row.asin,
+            'Confirmed': row.confirmQty
         };
 
-        // 动态填充各个 Shipment 的数量
-        shipmentList.forEach(shipName => {
-            if (item.Shipment === shipName) {
-                rowObj[shipName] = item['确认数量'];
+        allShipments.forEach(sName => {
+            if (row.shipmentName === sName) {
+                rowObj[sName] = row.confirmQty;
             } else {
-                rowObj[shipName] = 0;
+                rowObj[sName] = 0;
             }
         });
 
         table1List.push(rowObj);
     });
 
-    // 3. 生成【表二】：严格按照排版转置结构的提货预约汇总表
-    let table2Group = {};
-    shipmentList.forEach(shipName => {
-        table2Group[shipName] = {
-            destination: '',
-            asins: new Set(),
-            totalUnits: 0,
-            pickupDate: '',
-            pickupLocation: '',
-            stackedPallets: '',
-            unstackedPallets: 0,
-            cartons: 0,
-            totalWeight: 0,
-            totalVolume: 0,
-            arn: shipName
-        };
-    });
-
-    initDataList.forEach(item => {
-        const group = table2Group[item.Shipment];
-        if (group) {
-            if (!group.destination) group.destination = item['Ship-to location'];
-            if (item.ASIN) group.asins.add(item.ASIN);
-            group.totalUnits += item['确认数量'];
-            if (!group.pickupDate) group.pickupDate = item['Expected date'];
-            if (!group.pickupLocation) group.pickupLocation = item['仓库'];
-            group.unstackedPallets += parseInt(item['托盘'] || 0, 10);
-            group.cartons += item['箱数'];
-            group.totalWeight += item['重量'];
-            group.totalVolume += item['体积'];
-        }
-    });
-
-    // 按照指定行排版转换矩阵
+    // ----------------------------------------------------
+    // 第四步：构建【表二】转置汇总表（对齐 VBA 12 行格式 & 托盘算法）
+    // ----------------------------------------------------
     let table2Transposed = [
         { 'Input': 'Desination:' },
         { 'Input': 'Ship ASIN' },
@@ -451,53 +465,82 @@ function calculateShippingTables(rawDataFiles, arnMapping) {
         { 'Input': 'Shipment reference number (optional)' }
     ];
 
-    shipmentList.forEach(shipName => {
-        const g = table2Group[shipName];
-        table2Transposed[0][shipName] = g.destination;
-        table2Transposed[1][shipName] = Array.from(g.asins).join(', ');
-        table2Transposed[2][shipName] = g.totalUnits;
-        table2Transposed[3][shipName] = g.pickupDate;
-        table2Transposed[4][shipName] = g.pickupLocation;
-        table2Transposed[5][shipName] = g.stackedPallets;
-        table2Transposed[6][shipName] = g.unstackedPallets;
-        table2Transposed[7][shipName] = g.cartons;
-        table2Transposed[8][shipName] = parseFloat(g.totalWeight.toFixed(2));
-        table2Transposed[9][shipName] = parseFloat(g.totalVolume.toFixed(2));
-        table2Transposed[10][shipName] = g.arn;
+    shipmentMap.forEach(shipment => {
+        let totalUnits = 0;
+        let totalCartons = 0;
+        let totalWeight = 0;
+        let totalVolume = 0;
+        let asinSet = new Set();
+
+        shipment.items.forEach(item => {
+            totalUnits += item.confirmQty;
+            totalCartons += item.cartons;
+            totalWeight += item.calculatedWeight;
+            totalVolume += item.calculatedVol;
+            if (item.asin) asinSet.add(item.asin);
+        });
+
+        // 运用 VBA 中的托盘算法
+        const unstackedPallets = calculatePallets(totalCartons, totalVolume, totalWeight);
+
+        const colName = shipment.name;
+        table2Transposed[0][colName] = shipment.poDestination;
+        table2Transposed[1][colName] = Array.from(asinSet).join(', ');
+        table2Transposed[2][colName] = totalUnits;
+        table2Transposed[3][colName] = shipment.expectedDate;
+        table2Transposed[4][colName] = shipment.pickUpLoc;
+        table2Transposed[5][colName] = ''; // Stacked pallets
+        table2Transposed[6][colName] = unstackedPallets;
+        table2Transposed[7][colName] = totalCartons;
+        table2Transposed[8][colName] = parseFloat(totalWeight.toFixed(2));
+        table2Transposed[9][colName] = parseFloat(totalVolume.toFixed(2));
+        table2Transposed[10][colName] = shipment.name;
     });
 
-    // 4. 四表汇总
+    // ----------------------------------------------------
+    // 第五步：构建【四表汇总】与【初始校验数据】
+    // ----------------------------------------------------
     let summaryMap = new Map();
-    initDataList.forEach(item => {
-        const key = `${item.ASIN}_${item['Ship-to location']}`;
+    normalizedRows.forEach(item => {
+        const key = `${item.asin}_${item.poDestination}`;
         if (!summaryMap.has(key)) {
             summaryMap.set(key, {
-                'ASIN': item.ASIN,
-                'Ship-to location': item['Ship-to location'],
-                '总PCS': item.PCS,
-                '总确认数量': item['确认数量'],
-                '总箱数': item['箱数'],
-                '总体积(cuft)': item['体积'],
-                '总重量(lbs)': item['重量']
+                'ASIN': item.asin,
+                'Ship-to location': item.poDestination,
+                '总确认数量': item.confirmQty,
+                '总箱数': item.cartons,
+                '总体积(cuft)': item.calculatedVol,
+                '总重量(lbs)': item.calculatedWeight
             });
         } else {
             const existing = summaryMap.get(key);
-            existing['总PCS'] += item.PCS;
-            existing['总确认数量'] += item['确认数量'];
-            existing['总箱数'] += item['箱数'];
-            existing['总体积(cuft)'] = parseFloat((existing['总体积(cuft)'] + item['体积']).toFixed(2));
-            existing['总重量(lbs)'] = parseFloat((existing['总重量(lbs)'] + item['重量']).toFixed(2));
+            existing['总确认数量'] += item.confirmQty;
+            existing['总箱数'] += item.cartons;
+            existing['总体积(cuft)'] = parseFloat((existing['总体积(cuft)'] + item.calculatedVol).toFixed(2));
+            existing['总重量(lbs)'] = parseFloat((existing['总重量(lbs)'] + item.calculatedWeight).toFixed(2));
         }
     });
 
-    processedResult.initData = initDataList;
+    // 保存到全局变量
+    processedResult.initData = normalizedRows.map(r => ({
+        'PO': r.po,
+        'ASIN': r.asin,
+        '确认数量': r.confirmQty,
+        '箱数': r.cartons,
+        '体积': r.calculatedVol,
+        '重量': r.calculatedWeight,
+        '仓库': r.pickUpLoc,
+        'Ship-to location': r.poDestination,
+        'Expected date': r.expectedDate,
+        'Shipment': r.shipmentName
+    }));
     processedResult.table1 = table1List;
     processedResult.table2 = table2Transposed;
     processedResult.summary = Array.from(summaryMap.values());
 }
 
 // ==========================================
-// 3. Tab 切换与表格渲染
+// 4. Tab 切换与 UI 表格渲染
 // ==========================================
 function switchTab(tabId, btn) {
     document.querySelectorAll('.tab-content').forEach(el => el.style.display = 'none');
@@ -560,7 +603,7 @@ function exportAllTablesToExcel() {
 }
 
 // ==========================================
-// 4. 事件监听器注册
+// 5. 事件监听器初始化
 // ==========================================
 document.addEventListener('DOMContentLoaded', () => {
     renderSpecTable();
