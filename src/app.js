@@ -158,28 +158,29 @@ function importSpecsFromExcel(file) {
             let updateCount = 0;
 
             jsonData.forEach(row => {
-                // 自动匹配常见的表头命名（不区分大小写与空格）
-                const asin = String(row['ASIN'] || row['asin'] || '').trim();
-                const name = String(row['品名'] || row['品名描述'] || row['Name'] || row['Description'] || '').trim();
-                const pcs = parseInt(row['单箱 PCS'] || row['单箱PCS'] || row['PCS'] || row['pcs'] || 0, 10);
-                const vol = parseFloat(row['单箱体积 (cuFt)'] || row['单箱体积'] || row['cuFt'] || row['vol'] || 0);
-                const weight = parseFloat(row['单箱重量 (lbs)'] || row['单箱重量'] || row['lbs'] || row['weight'] || 0);
+    // 将当前行的 key 统一转成小写，方便忽略大小写精准匹配
+    const lowerRow = {};
+    Object.keys(row).forEach(k => {
+        lowerRow[k.trim().toLowerCase()] = row[k];
+    });
 
-                // 核心字段校验：必须要包含 ASIN 且数值合法
-                if (asin && !isNaN(pcs) && pcs > 0 && !isNaN(vol) && !isNaN(weight)) {
-                    const existingIndex = boxSpecs.findIndex(item => item.asin === asin);
-                    
-                    if (existingIndex !== -1) {
-                        // 如果已存在则更新
-                        boxSpecs[existingIndex] = { name, asin, pcs, vol, weight };
-                        updateCount++;
-                    } else {
-                        // 不存在则新增
-                        boxSpecs.push({ name, asin, pcs, vol, weight });
-                        successCount++;
-                    }
-                }
-            });
+    const asin = String(lowerRow['asin'] || '').trim();
+    const name = String(lowerRow['name'] || lowerRow['品名'] || lowerRow['品名描述'] || lowerRow['description'] || '').trim();
+    const pcs = parseInt(lowerRow['pcs'] || lowerRow['单箱 pcs'] || lowerRow['单箱pcs'] || 0, 10);
+    const vol = parseFloat(lowerRow['vol'] || lowerRow['单箱体积 (cuft)'] || lowerRow['单箱体积'] || lowerRow['cuft'] || 0);
+    const weight = parseFloat(lowerRow['weight'] || lowerRow['单箱重量 (lbs)'] || lowerRow['单箱重量'] || lowerRow['lbs'] || 0);
+
+    if (asin && !isNaN(pcs) && pcs > 0 && !isNaN(vol) && !isNaN(weight)) {
+        const existingIndex = boxSpecs.findIndex(item => item.asin === asin);
+        if (existingIndex !== -1) {
+            boxSpecs[existingIndex] = { name, asin, pcs, vol, weight };
+            updateCount++;
+        } else {
+            boxSpecs.push({ name, asin, pcs, vol, weight });
+            successCount++;
+        }
+    }
+});
 
             // 保存并刷新列表
             saveSpecsToStorage();
