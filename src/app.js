@@ -132,6 +132,7 @@ function exportSpecsToExcel() {
     XLSX.utils.book_append_sheet(wb, ws, "箱规数据库");
     XLSX.writeFile(wb, "Vendor_Box_Specs.xlsx");
 }
+
 // ==========================================
 // 批量导入箱规功能
 // ==========================================
@@ -158,31 +159,29 @@ function importSpecsFromExcel(file) {
             let updateCount = 0;
 
             jsonData.forEach(row => {
-    // 将当前行的 key 统一转成小写，方便忽略大小写精准匹配
-    const lowerRow = {};
-    Object.keys(row).forEach(k => {
-        lowerRow[k.trim().toLowerCase()] = row[k];
-    });
+                const lowerRow = {};
+                Object.keys(row).forEach(k => {
+                    lowerRow[k.trim().toLowerCase()] = row[k];
+                });
 
-    const asin = String(lowerRow['asin'] || '').trim();
-    const name = String(lowerRow['name'] || lowerRow['品名'] || lowerRow['品名描述'] || lowerRow['description'] || '').trim();
-    const pcs = parseInt(lowerRow['pcs'] || lowerRow['单箱 pcs'] || lowerRow['单箱pcs'] || 0, 10);
-    const vol = parseFloat(lowerRow['vol'] || lowerRow['单箱体积 (cuft)'] || lowerRow['单箱体积'] || lowerRow['cuft'] || 0);
-    const weight = parseFloat(lowerRow['weight'] || lowerRow['单箱重量 (lbs)'] || lowerRow['单箱重量'] || lowerRow['lbs'] || 0);
+                const asin = String(lowerRow['asin'] || '').trim();
+                const name = String(lowerRow['name'] || lowerRow['品名'] || lowerRow['品名描述'] || lowerRow['description'] || '').trim();
+                const pcs = parseInt(lowerRow['pcs'] || lowerRow['单箱 pcs'] || lowerRow['单箱pcs'] || 0, 10);
+                const vol = parseFloat(lowerRow['vol'] || lowerRow['单箱体积 (cuft)'] || lowerRow['单箱体积'] || lowerRow['cuft'] || 0);
+                const weight = parseFloat(lowerRow['weight'] || lowerRow['单箱重量 (lbs)'] || lowerRow['单箱重量'] || lowerRow['lbs'] || 0);
 
-    if (asin && !isNaN(pcs) && pcs > 0 && !isNaN(vol) && !isNaN(weight)) {
-        const existingIndex = boxSpecs.findIndex(item => item.asin === asin);
-        if (existingIndex !== -1) {
-            boxSpecs[existingIndex] = { name, asin, pcs, vol, weight };
-            updateCount++;
-        } else {
-            boxSpecs.push({ name, asin, pcs, vol, weight });
-            successCount++;
-        }
-    }
-});
+                if (asin && !isNaN(pcs) && pcs > 0 && !isNaN(vol) && !isNaN(weight)) {
+                    const existingIndex = boxSpecs.findIndex(item => item.asin === asin);
+                    if (existingIndex !== -1) {
+                        boxSpecs[existingIndex] = { name, asin, pcs, vol, weight };
+                        updateCount++;
+                    } else {
+                        boxSpecs.push({ name, asin, pcs, vol, weight });
+                        successCount++;
+                    }
+                }
+            });
 
-            // 保存并刷新列表
             saveSpecsToStorage();
             renderSpecTable();
 
@@ -195,24 +194,6 @@ function importSpecsFromExcel(file) {
     reader.readAsArrayBuffer(file);
 }
 
-// 在 DOMContentLoaded 中补充事件绑定
-document.addEventListener('DOMContentLoaded', () => {
-    // ... 保留你原有的其他绑定 ...
-
-    // 批量导入箱规事件监听
-    const importFileInput = document.getElementById('importSpecFileInput');
-    const btnImportSpecs = document.getElementById('btnImportSpecs');
-
-    if (btnImportSpecs && importFileInput) {
-        btnImportSpecs.addEventListener('click', () => importFileInput.click());
-        importFileInput.addEventListener('change', (e) => {
-            if (e.target.files && e.target.files[0]) {
-                importSpecsFromExcel(e.target.files[0]);
-                e.target.value = ''; // 清空选择，方便重复上传同一文件
-            }
-        });
-    }
-});
 // ==========================================
 // 辅助函数：计算 Window Start 到 Window End 范围内的周四
 // ==========================================
@@ -258,7 +239,7 @@ async function processShippingData() {
             rawDataFiles.push({ fileName: files[i].name, data: data });
         }
 
-        const arnText = document.getElementById('arnText').value.trim();
+        const arnText = document.getElementById('arnText') ? document.getElementById('arnText').value.trim() : '';
         const arnMapping = parseArnText(arnText);
 
         calculateShippingTables(rawDataFiles, arnMapping);
@@ -317,7 +298,6 @@ function calculateShippingTables(rawDataFiles, arnMapping) {
         const rows = fileObj.data;
         if (!rows || rows.length === 0) return;
 
-        // 检查是否有 Ship-to location 或 Window start 字段来识别 PO确认表
         const sampleKeys = Object.keys(rows[0]).map(k => k.trim().toLowerCase());
         if (sampleKeys.includes('ship-to location') || sampleKeys.includes('window start')) {
             poConfirmRows = poConfirmRows.concat(rows);
@@ -326,77 +306,78 @@ function calculateShippingTables(rawDataFiles, arnMapping) {
         }
     });
 
-    // 如果只有一个文件或没识别出分表，做备用兼容
     if (caPoRows.length === 0 && poConfirmRows.length > 0) {
         caPoRows = poConfirmRows;
     }
 
-    // 2. 将 PO确认表 按照 `${PO}_${ASIN}` 建立字典索引，提取 Ship-to location、Window start、Window end
+    // 2. 将 PO确认表 按照 `${PO}_${ASIN}` 建立字典索引
     const poConfirmMap = new Map();
     poConfirmRows.forEach(row => {
-        // 兼容忽略大小写的 key 提取
         const lowerRow = {};
         Object.keys(row).forEach(k => lowerRow[k.trim().toLowerCase()] = row[k]);
 
-        const po = String(lowerRow['po'] || lowerRow['purchase order'] || '').trim();
+        const po = String(lowerRow['po'] || lowerRow['purchase order'] || lowerRow['po number'] || '').trim();
         const asin = String(lowerRow['asin'] || lowerRow['item'] || '').trim();
 
         if (po && asin) {
             const key = `${po}_${asin}`;
             poConfirmMap.set(key, {
-                shipToLocation: lowerRow['ship-to location'] || '',
+                shipToLocation: lowerRow['ship-to location'] || lowerRow['destination'] || '',
                 windowStart: lowerRow['window start'] || '',
                 windowEnd: lowerRow['window end'] || ''
             });
         }
     });
 
-    // 3. 构建初始校验数据表（合并匹配逻辑）
+    // 3. 构建初始校验数据表
     let initDataList = [];
 
     caPoRows.forEach(row => {
         const lowerRow = {};
         Object.keys(row).forEach(k => lowerRow[k.trim().toLowerCase()] = row[k]);
 
-        const po = String(lowerRow['po'] || lowerRow['purchase order'] || '').trim();
+        const po = String(lowerRow['po'] || lowerRow['purchase order'] || lowerRow['po number'] || '').trim();
         const asin = String(lowerRow['asin'] || lowerRow['item'] || '').trim();
-        const pcs = parseInt(lowerRow['pcs'] || lowerRow['quantity'] || 0, 10);
-        const confirmQty = parseInt(lowerRow['确认数量'] || lowerRow['accepted quantity'] || pcs, 10);
-        const singlePcs = parseInt(lowerRow['单箱pcs'] || lowerRow['单箱 pcs'] || 0, 10);
-        const cartons = parseInt(lowerRow['箱数'] || 0, 10);
-        const warehouse = String(lowerRow['仓库'] || '').trim();
+        const pcs = parseInt(lowerRow['pcs'] || lowerRow['quantity'] || lowerRow['qty'] || 0, 10);
+        const confirmQty = parseInt(lowerRow['确认数量'] || lowerRow['accepted quantity'] || lowerRow['confirmed quantity'] || pcs, 10);
+        const warehouse = String(lowerRow['仓库'] || lowerRow['warehouse'] || '').trim();
 
-        // 查找 PO 确认表中对应的映射字段
         const poKey = `${po}_${asin}`;
         const confirmInfo = poConfirmMap.get(poKey) || {};
 
-        const shipToLocation = confirmInfo.shipToLocation || '';
-        const windowStart = confirmInfo.windowStart || '';
-        const windowEnd = confirmInfo.windowEnd || '';
-
-        // 计算 Expected Date (Window Start ~ Window End 范围内的周四)
+        const shipToLocation = confirmInfo.shipToLocation || lowerRow['ship-to location'] || '';
+        const windowStart = confirmInfo.windowStart || lowerRow['window start'] || '';
+        const windowEnd = confirmInfo.windowEnd || lowerRow['window end'] || '';
         const expectedDate = calculateExpectedDate(windowStart, windowEnd);
 
-        // 匹配箱规数据库（计算体积和重量）
+        // 匹配箱规
         const spec = boxSpecs.find(s => s.asin === asin);
+        const singlePcs = parseInt(lowerRow['单箱pcs'] || lowerRow['单箱 pcs'] || (spec ? spec.pcs : 0), 10);
         
-        let calculatedVol = '';
-        let calculatedWeight = '';
+        let cartons = parseInt(lowerRow['箱数'] || 0, 10);
+        if (cartons <= 0 && singlePcs > 0) {
+            cartons = Math.ceil(confirmQty / singlePcs);
+        }
+
+        let calculatedVol = 0;
+        let calculatedWeight = 0;
 
         if (spec && cartons > 0) {
-            calculatedVol = (cartons * spec.vol).toFixed(2);
-            calculatedWeight = (cartons * spec.weight).toFixed(2);
+            calculatedVol = parseFloat((cartons * spec.vol).toFixed(2));
+            calculatedWeight = parseFloat((cartons * spec.weight).toFixed(2));
         } else {
-            calculatedVol = lowerRow['体积'] || '';
-            calculatedWeight = lowerRow['重量'] || '';
+            calculatedVol = parseFloat(lowerRow['体积'] || 0);
+            calculatedWeight = parseFloat(lowerRow['重量'] || 0);
         }
+
+        const arn = arnMapping[po] || lowerRow['arn'] || lowerRow['shipment id'] || '';
 
         initDataList.push({
             'PO': po,
             'ASIN': asin,
             'PCS': pcs,
             '确认数量': confirmQty,
-            '单箱PCS': singlePcs > 0 ? singlePcs : (spec ? spec.pcs : ''),
+            '单箱PCS': singlePcs,
             '箱数': cartons,
             '体积': calculatedVol,
             '重量': calculatedWeight,
@@ -405,15 +386,90 @@ function calculateShippingTables(rawDataFiles, arnMapping) {
             'Ship-to location': shipToLocation,
             'window start': windowStart,
             'window end': windowEnd,
-            'Expected date': expectedDate
+            'Expected date': expectedDate,
+            'ARN': arn
         });
     });
 
+    // 4. 计算 表一：Shipment分配
+    let table1Map = new Map();
+    initDataList.forEach(item => {
+        const key = `${item.ARN || 'UNASSIGNED'}_${item.PO}_${item.ASIN}`;
+        if (!table1Map.has(key)) {
+            table1Map.set(key, { ...item });
+        } else {
+            const existing = table1Map.get(key);
+            existing.PCS += item.PCS;
+            existing['确认数量'] += item['确认数量'];
+            existing['箱数'] += item['箱数'];
+            existing['体积'] = parseFloat((existing['体积'] + item['体积']).toFixed(2));
+            existing['重量'] = parseFloat((existing['重量'] + item['重量']).toFixed(2));
+        }
+    });
+    let table1List = Array.from(table1Map.values());
+
+    // 5. 计算 表二：预约汇总
+    let table2Map = new Map();
+    initDataList.forEach(item => {
+        const key = `${item.ARN || 'UNASSIGNED'}_${item['Ship-to location']}_${item['Expected date']}`;
+        if (!table2Map.has(key)) {
+            table2Map.set(key, {
+                'ARN': item.ARN,
+                'Ship-to location': item['Ship-to location'],
+                'Expected date': item['Expected date'],
+                '总确认数量': item['确认数量'],
+                '总箱数': item['箱数'],
+                '总体积': item['体积'],
+                '总重量': item['重量'],
+                '涉及PO列表': [item.PO]
+            });
+        } else {
+            const existing = table2Map.get(key);
+            existing['总确认数量'] += item['确认数量'];
+            existing['总箱数'] += item['箱数'];
+            existing['总体积'] = parseFloat((existing['总体积'] + item['体积']).toFixed(2));
+            existing['总重量'] = parseFloat((existing['总重量'] + item['重量']).toFixed(2));
+            if (!existing['涉及PO列表'].includes(item.PO)) {
+                existing['涉及PO列表'].push(item.PO);
+            }
+        }
+    });
+    let table2List = Array.from(table2Map.values()).map(item => ({
+        ...item,
+        '涉及PO': item['涉及PO列表'].join(', ')
+    }));
+    table2List.forEach(item => delete item['涉及PO列表']);
+
+    // 6. 计算 四表汇总 (按 ASIN 与 仓库 维度汇总)
+    let summaryMap = new Map();
+    initDataList.forEach(item => {
+        const key = `${item.ASIN}_${item['Ship-to location']}`;
+        if (!summaryMap.has(key)) {
+            summaryMap.set(key, {
+                'ASIN': item.ASIN,
+                'Ship-to location': item['Ship-to location'],
+                '总PCS': item.PCS,
+                '总确认数量': item['确认数量'],
+                '总箱数': item['箱数'],
+                '总体积(cuft)': item['体积'],
+                '总重量(lbs)': item['重量']
+            });
+        } else {
+            const existing = summaryMap.get(key);
+            existing['总PCS'] += item.PCS;
+            existing['总确认数量'] += item['确认数量'];
+            existing['总箱数'] += item['箱数'];
+            existing['总体积(cuft)'] = parseFloat((existing['总体积(cuft)'] + item['体积']).toFixed(2));
+            existing['总重量(lbs)'] = parseFloat((existing['总重量(lbs)'] + item['重量']).toFixed(2));
+        }
+    });
+    let summaryList = Array.from(summaryMap.values());
+
     // 保存计算结果
     processedResult.initData = initDataList;
-    processedResult.summary = initDataList;
-    processedResult.table1 = initDataList;
-    processedResult.table2 = initDataList;
+    processedResult.table1 = table1List;
+    processedResult.table2 = table2List;
+    processedResult.summary = summaryList;
 }
 
 // ==========================================
@@ -496,6 +552,20 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('btnExportSpecs')?.addEventListener('click', exportSpecsToExcel);
     document.getElementById('btnCloseModal')?.addEventListener('click', closeSpecModal);
     document.getElementById('btnSaveSpec')?.addEventListener('click', saveSpec);
+
+    // 批量导入箱规事件监听
+    const importFileInput = document.getElementById('importSpecFileInput');
+    const btnImportSpecs = document.getElementById('btnImportSpecs');
+
+    if (btnImportSpecs && importFileInput) {
+        btnImportSpecs.addEventListener('click', () => importFileInput.click());
+        importFileInput.addEventListener('change', (e) => {
+            if (e.target.files && e.target.files[0]) {
+                importSpecsFromExcel(e.target.files[0]);
+                e.target.value = '';
+            }
+        });
+    }
 
     // Tab 切换按钮绑定
     document.getElementById('btnTabSummary')?.addEventListener('click', (e) => switchTab('tabSummary', e.target));
