@@ -214,6 +214,30 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 });
 // ==========================================
+// 辅助函数：计算 Window Start 到 Window End 范围内的周四
+// ==========================================
+function calculateExpectedDate(windowStartStr, windowEndStr) {
+    if (!windowStartStr || !windowEndStr) return '';
+
+    let start = new Date(windowStartStr);
+    let end = new Date(windowEndStr);
+
+    if (isNaN(start.getTime()) || isNaN(end.getTime())) return '';
+
+    let curr = new Date(start);
+    while (curr <= end) {
+        if (curr.getDay() === 4) { // 4 代表周四
+            const y = curr.getFullYear();
+            const m = curr.getMonth() + 1;
+            const d = curr.getDate();
+            return `${y}/${m}/${d}`;
+        }
+        curr.setDate(curr.getDate() + 1);
+    }
+    return '';
+}
+
+// ==========================================
 // 2. 货件协同数据核心算法
 // ==========================================
 let processedResult = { summary: [], table1: [], table2: [], initData: [] };
@@ -228,21 +252,16 @@ async function processShippingData() {
     }
 
     try {
-        let rawData = [];
+        let rawDataFiles = [];
         for (let i = 0; i < files.length; i++) {
             const data = await readExcelFile(files[i]);
-            rawData = rawData.concat(data);
-        }
-
-        if (rawData.length === 0) {
-            alert('未能解析到有效的表格内容，请检查文件！');
-            return;
+            rawDataFiles.push({ fileName: files[i].name, data: data });
         }
 
         const arnText = document.getElementById('arnText').value.trim();
         const arnMapping = parseArnText(arnText);
 
-        calculateShippingTables(rawData, arnMapping);
+        calculateShippingTables(rawDataFiles, arnMapping);
 
         document.getElementById('resultCard').style.display = 'block';
         document.getElementById('downloadAllBtn').style.display = 'inline-flex';
@@ -289,36 +308,112 @@ function parseArnText(text) {
     return map;
 }
 
-function calculateShippingTables(rawData, arnMapping) {
-    processedResult.initData = rawData;
-    let summaryList = [];
+function calculateShippingTables(rawDataFiles, arnMapping) {
+    let poConfirmRows = []; // PO确认.xls 的数据
+    let caPoRows = [];      // CA-PO.xls 的数据
 
-    rawData.forEach(row => {
-        const po = row['PO'] || row['Purchase Order'] || row['PO Number'] || 'N/A';
-        const asin = row['ASIN'] || row['Item'] || 'N/A';
-        const qty = parseInt(row['Quantity'] || row['Qty'] || row['Ordered Quantity'] || 0, 10);
+    // 1. 智能拆分与识别上传的两个文件
+    rawDataFiles.forEach(fileObj => {
+        const rows = fileObj.data;
+        if (!rows || rows.length === 0) return;
+
+        // 检查是否有 Ship-to location 或 Window start 字段来识别 PO确认表
+        const sampleKeys = Object.keys(rows[0]).map(k => k.trim().toLowerCase());
+        if (sampleKeys.includes('ship-to location') || sampleKeys.includes('window start')) {
+            poConfirmRows = poConfirmRows.concat(rows);
+        } else {
+            caPoRows = caPoRows.concat(rows);
+        }
+    });
+
+    // 如果只有一个文件或没识别出分表，做备用兼容
+    if (caPoRows.length === 0 && poConfirmRows.length > 0) {
+        caPoRows = poConfirmRows;
+    }
+
+    // 2. 将 PO确认表 按照 `${PO}_${ASIN}` 建立字典索引，提取 Ship-to location、Window start、Window end
+    const poConfirmMap = new Map();
+    poConfirmRows.forEach(row => {
+        // 兼容忽略大小写的 key 提取
+        const lowerRow = {};
+        Object.keys(row).forEach(k => lowerRow[k.trim().toLowerCase()] = row[k]);
+
+        const po = String(lowerRow['po'] || lowerRow['purchase order'] || '').trim();
+        const asin = String(lowerRow['asin'] || lowerRow['item'] || '').trim();
+
+        if (po && asin) {
+            const key = `${po}_${asin}`;
+            poConfirmMap.set(key, {
+                shipToLocation: lowerRow['ship-to location'] || '',
+                windowStart: lowerRow['window start'] || '',
+                windowEnd: lowerRow['window end'] || ''
+            });
+        }
+    });
+
+    // 3. 构建初始校验数据表（合并匹配逻辑）
+    let initDataList = [];
+
+    caPoRows.forEach(row => {
+        const lowerRow = {};
+        Object.keys(row).forEach(k => lowerRow[k.trim().toLowerCase()] = row[k]);
+
+        const po = String(lowerRow['po'] || lowerRow['purchase order'] || '').trim();
+        const asin = String(lowerRow['asin'] || lowerRow['item'] || '').trim();
+        const pcs = parseInt(lowerRow['pcs'] || lowerRow['quantity'] || 0, 10);
+        const confirmQty = parseInt(lowerRow['确认数量'] || lowerRow['accepted quantity'] || pcs, 10);
+        const singlePcs = parseInt(lowerRow['单箱pcs'] || lowerRow['单箱 pcs'] || 0, 10);
+        const cartons = parseInt(lowerRow['箱数'] || 0, 10);
+        const warehouse = String(lowerRow['仓库'] || '').trim();
+
+        // 查找 PO 确认表中对应的映射字段
+        const poKey = `${po}_${asin}`;
+        const confirmInfo = poConfirmMap.get(poKey) || {};
+
+        const shipToLocation = confirmInfo.shipToLocation || '';
+        const windowStart = confirmInfo.windowStart || '';
+        const windowEnd = confirmInfo.windowEnd || '';
+
+        // 计算 Expected Date (Window Start ~ Window End 范围内的周四)
+        const expectedDate = calculateExpectedDate(windowStart, windowEnd);
+
+        // 匹配箱规数据库（计算体积和重量）
+        const spec = boxSpecs.find(s => s.asin === asin);
         
-        const spec = boxSpecs.find(s => s.asin === asin) || { pcs: 1, vol: 0, weight: 0 };
-        const cartons = spec.pcs > 0 ? Math.ceil(qty / spec.pcs) : 0;
-        const totalVol = (cartons * spec.vol).toFixed(2);
-        const totalWeight = (cartons * spec.weight).toFixed(2);
-        const arn = arnMapping[po] || row['ARN'] || '待补充';
+        let calculatedVol = '';
+        let calculatedWeight = '';
 
-        summaryList.push({
-            'PO 号': po,
+        if (spec && cartons > 0) {
+            calculatedVol = (cartons * spec.vol).toFixed(2);
+            calculatedWeight = (cartons * spec.weight).toFixed(2);
+        } else {
+            calculatedVol = lowerRow['体积'] || '';
+            calculatedWeight = lowerRow['重量'] || '';
+        }
+
+        initDataList.push({
+            'PO': po,
             'ASIN': asin,
-            '需求数量': qty,
-            '单箱 PCS': spec.pcs,
-            '预估箱数': cartons,
-            '总体积 (cuFt)': totalVol,
-            '总重量 (lbs)': totalWeight,
-            'ARN/Shipment ID': arn
+            'PCS': pcs,
+            '确认数量': confirmQty,
+            '单箱PCS': singlePcs > 0 ? singlePcs : (spec ? spec.pcs : ''),
+            '箱数': cartons,
+            '体积': calculatedVol,
+            '重量': calculatedWeight,
+            '托盘': lowerRow['托盘'] || '',
+            '仓库': warehouse,
+            'Ship-to location': shipToLocation,
+            'window start': windowStart,
+            'window end': windowEnd,
+            'Expected date': expectedDate
         });
     });
 
-    processedResult.summary = summaryList;
-    processedResult.table1 = summaryList;
-    processedResult.table2 = summaryList;
+    // 保存计算结果
+    processedResult.initData = initDataList;
+    processedResult.summary = initDataList;
+    processedResult.table1 = initDataList;
+    processedResult.table2 = initDataList;
 }
 
 // ==========================================
