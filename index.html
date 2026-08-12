@@ -97,21 +97,20 @@
     </div>
 
     <div class="card">
-        <div class="card-header">
-            <span>📦 箱规数据库配置</span>
-            <div style="display:flex; gap:10px;">
-                <label for="searchAsinInput" style="display:none;">搜索箱规</label>
-                <input type="text" id="searchAsinInput" class="search-input" placeholder="搜索 ASIN 或 品名...">
-                <button class="btn btn-secondary" id="btnAddSpec">➕ 新增箱规</button>
-                <input type="file" id="specFileInput" accept=".xlsx,.xls,.csv" style="margin-left:8px;">
-                <label style="margin-left:6px; font-size:0.85rem;">
-                <input type="checkbox" id="specOverwriteChk"> 覆盖已存在 ASIN
-                </label>
-                <button class="btn btn-primary" onclick="window.importSpecsFromFiles()">📂 批量导入箱规</button>
-                <button class="btn btn-secondary" id="btnResetDB">🔄 恢复默认</button>
-                <button class="btn btn-secondary" id="btnExportSpecs">📥 备份箱规</button>
-            </div>
-        </div>
+      <div class="card-header">
+    <span>📦 箱规数据库配置</span>
+    <div style="display:flex; gap:10px;">
+        <input type="text" id="searchAsinInput" class="search-input" placeholder="搜索 ASIN 或 品名...">
+        <button class="btn btn-secondary" id="btnAddSpec">➕ 新增箱规</button>
+        
+        <!-- 新增：批量导入按钮与隐藏的文件输入框 -->
+        <input type="file" id="importSpecFileInput" accept=".xlsx, .xls, .csv" style="display: none;">
+        <button class="btn btn-secondary" id="btnImportSpecs">📥 批量导入</button>
+        
+        <button class="btn btn-secondary" id="btnExportSpecs">📤 备份导出</button>
+        <button class="btn btn-secondary" id="btnResetDB">🔄 恢复默认</button>
+    </div>
+</div>
         <div class="table-container">
             <table>
                 <thead>
