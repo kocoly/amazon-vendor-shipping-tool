@@ -132,102 +132,86 @@ function exportSpecsToExcel() {
     XLSX.utils.book_append_sheet(wb, ws, "箱规数据库");
     XLSX.writeFile(wb, "Vendor_Box_Specs.xlsx");
 }
-// 批量导入箱规（支持多个文件）
-window.importSpecsFromFiles = async function() {
-    const input = document.getElementById('specFileInput');
-    if (!input || !input.files || input.files.length === 0) {
-        return alert('请先选择要导入的 Excel/CSV 文件（可多选）。');
+// ==========================================
+// 批量导入箱规功能
+// ==========================================
+function importSpecsFromExcel(file) {
+    if (typeof XLSX === 'undefined') {
+        alert('SheetJS 库未加载，无法解析 Excel');
+        return;
     }
 
-    const overwrite = !!document.getElementById('specOverwriteChk') && document.getElementById('specOverwriteChk').checked;
+    const reader = new FileReader();
+    reader.onload = function (e) {
+        try {
+            const data = new Uint8Array(e.target.result);
+            const workbook = XLSX.read(data, { type: 'array' });
+            const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+            const jsonData = XLSX.utils.sheet_to_json(firstSheet, { defval: "" });
 
-    try {
-        let rows = [];
-        for (let i = 0; i < input.files.length; i++) {
-            const file = input.files[i];
-            const data = await readExcelFile(file); // readExcelFile 已存在
-            // readExcelFile 返回每行对象数组
-            rows = rows.concat(data);
-        }
-
-        if (rows.length === 0) return alert('未在文件中解析到任何行，请检查文件格式或表头。');
-
-        // 归一化列名并转换为箱规对象
-        const normalized = rows.map(r => normalizeSpecRow(r)).filter(x => x !== null);
-
-        // 统计
-        let added = 0, updated = 0, skipped = 0, invalid = 0;
-        const invalidRows = [];
-
-        normalized.forEach(item => {
-            if (!item.asin) {
-                invalid++;
-                invalidRows.push({ reason: '缺少 ASIN', raw: item.raw });
-                return;
-            }
-            // 验证数值
-            if (!Number.isFinite(item.pcs) || !Number.isFinite(item.vol) || !Number.isFinite(item.weight)) {
-                invalid++;
-                invalidRows.push({ reason: '数字字段不合法', asin: item.asin, raw: item.raw });
+            if (jsonData.length === 0) {
+                alert('导入的文件中没有找到有效数据！');
                 return;
             }
 
-            const idx = boxSpecs.findIndex(s => s.asin === item.asin);
-            if (idx === -1) {
-                boxSpecs.push({ name: item.name || '', asin: item.asin, pcs: item.pcs, vol: item.vol, weight: item.weight });
-                added++;
-            } else {
-                if (overwrite) {
-                    boxSpecs[idx] = { name: item.name || boxSpecs[idx].name, asin: item.asin, pcs: item.pcs, vol: item.vol, weight: item.weight };
-                    updated++;
-                } else {
-                    skipped++;
+            let successCount = 0;
+            let updateCount = 0;
+
+            jsonData.forEach(row => {
+                // 自动匹配常见的表头命名（不区分大小写与空格）
+                const asin = String(row['ASIN'] || row['asin'] || '').trim();
+                const name = String(row['品名'] || row['品名描述'] || row['Name'] || row['Description'] || '').trim();
+                const pcs = parseInt(row['单箱 PCS'] || row['单箱PCS'] || row['PCS'] || row['pcs'] || 0, 10);
+                const vol = parseFloat(row['单箱体积 (cuFt)'] || row['单箱体积'] || row['cuFt'] || row['vol'] || 0);
+                const weight = parseFloat(row['单箱重量 (lbs)'] || row['单箱重量'] || row['lbs'] || row['weight'] || 0);
+
+                // 核心字段校验：必须要包含 ASIN 且数值合法
+                if (asin && !isNaN(pcs) && pcs > 0 && !isNaN(vol) && !isNaN(weight)) {
+                    const existingIndex = boxSpecs.findIndex(item => item.asin === asin);
+                    
+                    if (existingIndex !== -1) {
+                        // 如果已存在则更新
+                        boxSpecs[existingIndex] = { name, asin, pcs, vol, weight };
+                        updateCount++;
+                    } else {
+                        // 不存在则新增
+                        boxSpecs.push({ name, asin, pcs, vol, weight });
+                        successCount++;
+                    }
                 }
+            });
+
+            // 保存并刷新列表
+            saveSpecsToStorage();
+            renderSpecTable();
+
+            alert(`批量导入完成！\n新增箱规：${successCount} 条\n覆盖更新：${updateCount} 条`);
+        } catch (err) {
+            console.error(err);
+            alert('读取 Excel 文件失败，请检查文件格式是否正确！');
+        }
+    };
+    reader.readAsArrayBuffer(file);
+}
+
+// 在 DOMContentLoaded 中补充事件绑定
+document.addEventListener('DOMContentLoaded', () => {
+    // ... 保留你原有的其他绑定 ...
+
+    // 批量导入箱规事件监听
+    const importFileInput = document.getElementById('importSpecFileInput');
+    const btnImportSpecs = document.getElementById('btnImportSpecs');
+
+    if (btnImportSpecs && importFileInput) {
+        btnImportSpecs.addEventListener('click', () => importFileInput.click());
+        importFileInput.addEventListener('change', (e) => {
+            if (e.target.files && e.target.files[0]) {
+                importSpecsFromExcel(e.target.files[0]);
+                e.target.value = ''; // 清空选择，方便重复上传同一文件
             }
         });
-
-        saveSpecsToStorage();
-        renderSpecTable();
-
-        let msg = `导入完成：新增 ${added} 条；更新 ${updated} 条；跳过 ${skipped} 条；无效 ${invalid} 条。`;
-        if (invalid > 0) msg += '\n（存在无效行，请检查表头/数值，例如 ASIN、PCS、Vol、Weight）';
-        alert(msg);
-
-        // 如果需要，可以在页面上显示 invalidRows 的详细信息，或下载为日志，暂以 alert 简单提示
-        console.log('批量导入无效行样例：', invalidRows.slice(0,5));
-    } catch (err) {
-        console.error(err);
-        alert('导入失败：' + (err && err.message ? err.message : String(err)));
-    } finally {
-        // 清空 input，方便重复导入相同文件
-        input.value = '';
     }
-};
-
-// 将 Excel/CSV 行对象归一化成箱规项，返回 null 表示不可用行
-function normalizeSpecRow(row) {
-    // 小写 key map 方便匹配
-    const keys = {};
-    Object.keys(row || {}).forEach(k => keys[k.toString().toLowerCase().trim()] = k);
-
-    // 可能的列名（中文/英文混合）
-    const asinKey = keys['asin'] || keys['asin码'] || keys['asin/asin'] || keys['seller sku'] || keys['sku'] || keys['asin code'] || keys['asin码'];
-    const nameKey = keys['name'] || keys['品名'] || keys['描述'] || keys['title'] || keys['product name'];
-    const pcsKey = keys['pcs'] || keys['单箱 pcs'] || keys['case qty'] || keys['carton qty'] || keys['pcs/箱'] || keys['pcs数量'];
-    const volKey = keys['vol'] || keys['volume'] || keys['体积'] || keys['单箱体积'] || keys['volume (cuft)'] || keys['cuft'];
-    const weightKey = keys['weight'] || keys['lbs'] || keys['重量'] || keys['单箱重量'] || keys['weight (lbs)'];
-
-    const asin = asinKey ? String(row[asinKey]).trim() : (row['ASIN'] ? String(row['ASIN']).trim() : '');
-    const name = nameKey ? String(row[nameKey] || '').trim() : String(row['Name'] || row['品名'] || '') .trim();
-    const pcs = pcsKey ? parseInt(String(row[pcsKey]).replace(/,/g,''), 10) : parseInt(String(row['PCS'] || row['pcs'] || 0).replace(/,/g,''), 10);
-    const vol = volKey ? parseFloat(String(row[volKey]).replace(/,/g,'')) : parseFloat(String(row['Vol'] || row['vol'] || 0).replace(/,/g,''));
-    const weight = weightKey ? parseFloat(String(row[weightKey]).replace(/,/g,'')) : parseFloat(String(row['Weight'] || row['weight'] || 0).replace(/,/g,''));
-
-    // 若没有 ASIN，则丢弃
-    if (!asin) return null;
-
-    return { asin, name, pcs: Number.isFinite(pcs) ? pcs : NaN, vol: Number.isFinite(vol) ? vol : NaN, weight: Number.isFinite(weight) ? weight : NaN, raw: row };
-}
+});
 // ==========================================
 // 2. 货件协同数据核心算法
 // ==========================================
