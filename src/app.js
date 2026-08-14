@@ -185,15 +185,10 @@ function importSpecsFromExcel(file) {
 }
 
 // ==========================================
-// 2. 辅助计算与日期工具 (解析 Excel 序列号 & 推算首个周四)
+// 2. 辅助计算与日期工具
 // ==========================================
-
-/**
- * 将 Excel 序列号 (如 46195) 或文本格式解析为 JS Date 对象
- */
 function parseExcelDate(val) {
     if (!val) return null;
-    
     if (typeof val === 'number' || (!isNaN(val) && !String(val).includes('-') && !String(val).includes('/'))) {
         const num = Number(val);
         const utc_days  = Math.floor(num - 25569);
@@ -207,9 +202,6 @@ function parseExcelDate(val) {
     return isNaN(d.getTime()) ? null : d;
 }
 
-/**
- * 自动在 Window Start 至 Window End 范围内寻找第一个周四
- */
 function calculateExpectedThursday(windowStartVal, windowEndVal) {
     const start = parseExcelDate(windowStartVal);
     const end = parseExcelDate(windowEndVal);
@@ -226,13 +218,9 @@ function calculateExpectedThursday(windowStartVal, windowEndVal) {
         }
         curr.setDate(curr.getDate() + 1);
     }
-
     return '';
 }
 
-/**
- * 复刻托盘计算逻辑
- */
 function calculatePallets(cartonCount, totalVol, totalWt) {
     if (cartonCount <= 10) return 0;
     const palletsByVol = Math.ceil(totalVol / PALLET_VOL_CANADA);
@@ -295,30 +283,22 @@ function readExcelFile(file) {
     });
 }
 
-/**
- * ⚡ 高级亚马逊后台 ARN 文本解析器
- * 完美支持多 PO (如 "2ZQD4VQA and 8P8T16JU")、跨行文本解析
- */
 function parseArnText(text) {
     const map = {};
     if (!text || !text.trim()) return map;
 
-    // 按 "Edit shipment" 分块解析
     const blocks = text.split(/Edit shipment/i);
 
     blocks.forEach(block => {
         if (!block.trim()) return;
 
-        // 提取 ARN 编号 (例如: Shipment ID (ARN): 44526607291 created)
         const arnMatch = block.match(/Shipment ID \(ARN\):\s*([A-Za-z0-9]+)/i);
         const arn = arnMatch ? arnMatch[1].trim() : '';
 
-        // 提取 Purchase orders (POs): 后续文本行
         const poSectionMatch = block.match(/Purchase orders \(POs\):([^\n\r]+)/i);
 
         if (arn && poSectionMatch) {
             const poStr = poSectionMatch[1];
-            // 提取该行中所有的 8 位英数字 PO 编号
             const matchedPOs = poStr.match(/[A-Z0-9]{8}/g);
             if (matchedPOs) {
                 matchedPOs.forEach(po => {
@@ -335,7 +315,6 @@ function calculateShippingTables(rawDataFiles, arnMapping) {
     let poConfirmRows = [];
     let caPoRows = [];
 
-    // 第一步：分类 PO确认 表和 CA-PO 表
     rawDataFiles.forEach(fileObj => {
         const rows = fileObj.data;
         if (!rows || rows.length === 0) return;
@@ -354,7 +333,6 @@ function calculateShippingTables(rawDataFiles, arnMapping) {
         caPoRows = poConfirmRows;
     }
 
-    // 第二步：构建 PO确认 Lookup Map
     const poConfirmLookup = new Map();
     poConfirmRows.forEach(row => {
         const lowerRow = {};
@@ -375,7 +353,6 @@ function calculateShippingTables(rawDataFiles, arnMapping) {
         }
     });
 
-    // 第三步：规范化原始数据
     let normalizedRows = [];
     caPoRows.forEach((row, index) => {
         const lowerRow = {};
@@ -399,6 +376,8 @@ function calculateShippingTables(rawDataFiles, arnMapping) {
 
         const spec = boxSpecs.find(s => s.asin === asin);
         const singlePcs = parseInt(lowerRow['单箱pcs'] || lowerRow['单箱 pcs'] || (spec ? spec.pcs : 0), 10);
+        const singleVol = spec ? spec.vol : parseFloat(lowerRow['单箱体积'] || 0);
+        const singleWeight = spec ? spec.weight : parseFloat(lowerRow['单箱重量'] || 0);
 
         let cartons = parseInt(lowerRow['箱数'] || lowerRow['cartons'] || 0, 10);
         if (cartons <= 0 && singlePcs > 0) {
@@ -416,6 +395,8 @@ function calculateShippingTables(rawDataFiles, arnMapping) {
             calculatedWeight = parseFloat(lowerRow['重量'] || lowerRow['total weight (lbs.)'] || 0);
         }
 
+        const arn = arnMapping[po] || String(lowerRow['arn'] || '').trim();
+
         normalizedRows.push({
             rowIndex: index + 2,
             po,
@@ -427,29 +408,32 @@ function calculateShippingTables(rawDataFiles, arnMapping) {
             windowEnd: windowEnd ? (parseExcelDate(windowEnd)?.toLocaleDateString() || String(windowEnd)) : '',
             expectedDate: expectedThursday,
             cartons,
+            singlePcs,
+            singleVol,
+            singleWeight,
             calculatedVol,
-            calculatedWeight
+            calculatedWeight,
+            arn
         });
     });
 
-    // ⚡【完全对齐 Excel 顺序】：主排序 = PO 升序，次排序 = ASIN 降序
     normalizedRows.sort((a, b) => {
-        const poCompare = a.po.localeCompare(b.po); // 1. 先按 PO 升序
+        const poCompare = a.po.localeCompare(b.po);
         if (poCompare !== 0) return poCompare;
-        return b.asin.localeCompare(a.asin);         // 2. PO 相同时，按 ASIN 降序
+        return b.asin.localeCompare(a.asin);
     });
 
-    // 第四步： Shipment 分组合并
+    // ⚡ 【统一规则】：根据 ARN (如有) 或 仓库+目的地 拆分逻辑分组，但展示名称统一保持为 Shipment 1, Shipment 2...
     let shipmentMap = new Map();
     let shipmentCount = 0;
 
     normalizedRows.forEach(row => {
-        const realArn = arnMapping[row.po];
-        let shipmentKey = realArn ? `ARN_${realArn}` : `${row.pickUpLoc}||${row.poDestination}`;
+        let shipmentKey = row.arn ? `ARN_${row.arn}` : `${row.pickUpLoc}||${row.poDestination}`;
 
         if (!shipmentMap.has(shipmentKey)) {
             shipmentCount++;
-            const sName = realArn ? `ARN: ${realArn}` : `Shipment ${shipmentCount}`;
+            // 💡 表头始终保持 Shipment X 形式，不做强制变动
+            const sName = `Shipment ${shipmentCount}`;
             shipmentMap.set(shipmentKey, {
                 id: shipmentCount,
                 name: sName,
@@ -461,6 +445,7 @@ function calculateShippingTables(rawDataFiles, arnMapping) {
         }
 
         const currentShipment = shipmentMap.get(shipmentKey);
+        row.shipmentNumber = currentShipment.id;
         row.shipmentName = currentShipment.name;
         if (!currentShipment.expectedDate && row.expectedDate) {
             currentShipment.expectedDate = row.expectedDate;
@@ -517,7 +502,6 @@ function calculateShippingTables(rawDataFiles, arnMapping) {
             if (item.asin) asinSet.add(item.asin);
         });
 
-        // ⚡ 将表二单元格内的 ASIN 按降序排列展示
         const sortedAsins = Array.from(asinSet).sort((a, b) => b.localeCompare(a));
         const unstackedPallets = calculatePallets(totalCartons, totalVolume, totalWeight);
         const colName = shipment.name;
@@ -533,9 +517,10 @@ function calculateShippingTables(rawDataFiles, arnMapping) {
         table2Transposed[8][colName] = parseFloat(totalWeight.toFixed(2));
         table2Transposed[9][colName] = parseFloat(totalVolume.toFixed(2));
         table2Transposed[10][colName] = shipment.name;
+        
     });
 
-    // 第七步：构建【四表汇总】与【初始校验数据】
+    // 第七步：构建【四表汇总】与完全对齐图片的【初始校验数据】
     let summaryMap = new Map();
     normalizedRows.forEach(item => {
         const key = `${item.asin}_${item.poDestination}`;
@@ -557,23 +542,34 @@ function calculateShippingTables(rawDataFiles, arnMapping) {
         }
     });
 
-    // 构建初始校验数据（已排好序）
-    processedResult.initData = normalizedRows.map(r => ({
-        'PO': r.po,
-        'ASIN': r.asin,
-        '确认数量': r.confirmQty,
-        '箱数': r.cartons,
-        '体积': r.calculatedVol,
-        '重量': r.calculatedWeight,
-        '仓库': r.pickUpLoc,
-        'Ship-to location': r.poDestination,
-        'window start': r.windowStart,
-        'window end': r.windowEnd,
-        'Expected date': r.expectedDate,
-        'Shipment': r.shipmentName
-    }));
+    // ⚡【精准匹配图片格式】的初始校验数据（按图表列顺序）
+    processedResult.initData = normalizedRows.map(r => {
+        const palletCount = calculatePallets(r.cartons, r.calculatedVol, r.calculatedWeight);
+        return {
+            '提货日期': r.expectedDate,
+            'PO-ASIN': `${r.po}${r.asin}`,
+            'window start': r.windowStart,
+            'window end': r.windowEnd,
+            'shipment编号': r.shipmentNumber,
+            'ARN': r.arn || '',
+            'PO': r.po,
+            'ASIN': r.asin,
+            'PCS': r.confirmQty,
+            '确认数量': r.confirmQty,
+            '单箱PCS': r.singlePcs,
+            '箱数': r.cartons,
+            '箱唛序列': '',
+            '箱唛序列图片': '',
+            '体积': r.calculatedVol,
+            '重量': r.calculatedWeight,
+            '托盘': palletCount,
+            '仓库': r.pickUpLoc,
+            'Ship-to location': r.poDestination,
+            '单箱体积': r.singleVol,
+            '单箱重量': r.singleWeight
+        };
+    });
 
-    // 保存最终数据表
     processedResult.table1 = table1List;
     processedResult.table2 = table2Transposed;
     processedResult.summary = Array.from(summaryMap.values());
