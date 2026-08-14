@@ -266,8 +266,8 @@ async function processShippingData() {
 
         calculateShippingTables(rawDataFiles, arnMapping);
 
-        document.getElementById('resultCard').style.display = 'block';
-        document.getElementById('downloadAllBtn').style.display = 'inline-flex';
+        if (document.getElementById('resultCard')) document.getElementById('resultCard').style.display = 'block';
+        if (document.getElementById('downloadAllBtn')) document.getElementById('downloadAllBtn').style.display = 'inline-flex';
 
         renderResultTables();
         alert('协同计算已完成！');
@@ -295,21 +295,39 @@ function readExcelFile(file) {
     });
 }
 
+/**
+ * ⚡ 高级亚马逊后台 ARN 文本解析器
+ * 完美支持多 PO (如 "2ZQD4VQA and 8P8T16JU")、跨行文本解析
+ */
 function parseArnText(text) {
     const map = {};
-    if (!text) return map;
-    const lines = text.split('\n');
-    let currentShipment = "";
-    lines.forEach(line => {
-        const shipmentMatch = line.match(/(Shipment\s*\d+|ARN|Shipment\s*ID)[:：]?\s*([A-Za-z0-9\s]+)/i);
-        if (shipmentMatch) {
-            currentShipment = shipmentMatch[0].trim();
-        }
-        const poMatches = line.match(/[A-Z0-9]{8}/g);
-        if (poMatches && currentShipment) {
-            poMatches.forEach(po => map[po] = currentShipment);
+    if (!text || !text.trim()) return map;
+
+    // 按 "Edit shipment" 分块解析
+    const blocks = text.split(/Edit shipment/i);
+
+    blocks.forEach(block => {
+        if (!block.trim()) return;
+
+        // 提取 ARN 编号 (例如: Shipment ID (ARN): 44526607291 created)
+        const arnMatch = block.match(/Shipment ID \(ARN\):\s*([A-Za-z0-9]+)/i);
+        const arn = arnMatch ? arnMatch[1].trim() : '';
+
+        // 提取 Purchase orders (POs): 后续文本行
+        const poSectionMatch = block.match(/Purchase orders \(POs\):([^\n\r]+)/i);
+
+        if (arn && poSectionMatch) {
+            const poStr = poSectionMatch[1];
+            // 提取该行中所有的 8 位英数字 PO 编号
+            const matchedPOs = poStr.match(/[A-Z0-9]{8}/g);
+            if (matchedPOs) {
+                matchedPOs.forEach(po => {
+                    map[po] = arn;
+                });
+            }
         }
     });
+
     return map;
 }
 
@@ -405,8 +423,8 @@ function calculateShippingTables(rawDataFiles, arnMapping) {
             confirmQty,
             pickUpLoc,
             poDestination: shipToLocation,
-            windowStart: windowStart ? parseExcelDate(windowStart)?.toLocaleDateString() : '',
-            windowEnd: windowEnd ? parseExcelDate(windowEnd)?.toLocaleDateString() : '',
+            windowStart: windowStart ? (parseExcelDate(windowStart)?.toLocaleDateString() || String(windowStart)) : '',
+            windowEnd: windowEnd ? (parseExcelDate(windowEnd)?.toLocaleDateString() || String(windowEnd)) : '',
             expectedDate: expectedThursday,
             cartons,
             calculatedVol,
@@ -416,7 +434,7 @@ function calculateShippingTables(rawDataFiles, arnMapping) {
 
     // ⚡【完全对齐 Excel 顺序】：主排序 = PO 升序，次排序 = ASIN 降序
     normalizedRows.sort((a, b) => {
-        const poCompare = a.po.localeCompare(b.po); // 1. 先按 PO 升序 (12... -> 2Z... -> 39... -> 4X...)
+        const poCompare = a.po.localeCompare(b.po); // 1. 先按 PO 升序
         if (poCompare !== 0) return poCompare;
         return b.asin.localeCompare(a.asin);         // 2. PO 相同时，按 ASIN 降序
     });
@@ -426,15 +444,12 @@ function calculateShippingTables(rawDataFiles, arnMapping) {
     let shipmentCount = 0;
 
     normalizedRows.forEach(row => {
-        let shipmentKey = `${row.pickUpLoc}||${row.poDestination}`;
-
-        if (arnMapping[row.po]) {
-            shipmentKey = `ARN_${arnMapping[row.po]}`;
-        }
+        const realArn = arnMapping[row.po];
+        let shipmentKey = realArn ? `ARN_${realArn}` : `${row.pickUpLoc}||${row.poDestination}`;
 
         if (!shipmentMap.has(shipmentKey)) {
             shipmentCount++;
-            const sName = arnMapping[row.po] || `Shipment ${shipmentCount}`;
+            const sName = realArn ? `ARN: ${realArn}` : `Shipment ${shipmentCount}`;
             shipmentMap.set(shipmentKey, {
                 id: shipmentCount,
                 name: sName,
@@ -562,7 +577,7 @@ function calculateShippingTables(rawDataFiles, arnMapping) {
     processedResult.table1 = table1List;
     processedResult.table2 = table2Transposed;
     processedResult.summary = Array.from(summaryMap.values());
-} // ⚠️ 之前代码遗漏的闭合括号
+}
 
 // ==========================================
 // 4. Tab 切换与 UI 表格渲染
