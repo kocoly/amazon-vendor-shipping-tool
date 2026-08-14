@@ -478,21 +478,21 @@ function calculateShippingTables(rawDataFiles, arnMapping) {
     // ----------------------------------------------------
     // 第五步：构建【表一】矩阵分配表
     // ----------------------------------------------------
-    let table1List = [];
-    normalizedRows.forEach(row => {
-        let rowObj = {
-            'PO Number': row.po,
-            'PO Destination': row.poDestination,
-            'ASIN/MSKU': row.asin,
-            'Confirmed': row.confirmQty
-        };
+    // let table1List = [];
+    // normalizedRows.forEach(row => {
+    //     let rowObj = {
+    //         'PO Number': row.po,
+    //         'PO Destination': row.poDestination,
+    //         'ASIN/MSKU': row.asin,
+    //         'Confirmed': row.confirmQty
+    //     };
 
-        allShipments.forEach(sName => {
-            rowObj[sName] = (row.shipmentName === sName) ? row.confirmQty : 0;
-        });
+    //     allShipments.forEach(sName => {
+    //         rowObj[sName] = (row.shipmentName === sName) ? row.confirmQty : 0;
+    //     });
 
-        table1List.push(rowObj);
-    });
+    //     table1List.push(rowObj);
+    // });
 
     // ----------------------------------------------------
     // 第六步：构建【表二】预约转置汇总表
@@ -543,8 +543,18 @@ function calculateShippingTables(rawDataFiles, arnMapping) {
     });
 
     // ----------------------------------------------------
-    // 第七步：构建四表汇总与规范化初始校验数据
     // ----------------------------------------------------
+    // 第七步：四表汇总与规范化初始校验数据
+    // ----------------------------------------------------
+    
+    // 1. 【优先排序】确保在生成 initData 和 table1 前，全局数据严格按 ASIN 降序 + PO 升序 排好序
+    normalizedRows.sort((a, b) => {
+        const asinCompare = b.asin.localeCompare(a.asin); // ASIN 降序
+        if (asinCompare !== 0) return asinCompare;
+        return a.po.localeCompare(b.po);                 // PO 升序
+    });
+
+    // 2. 构建【四表汇总】(Summary)
     let summaryMap = new Map();
     normalizedRows.forEach(item => {
         const key = `${item.asin}_${item.poDestination}`;
@@ -566,13 +576,24 @@ function calculateShippingTables(rawDataFiles, arnMapping) {
         }
     });
 
-  // 1. 确保在生成表格前，全局数据严格按照 ASIN 降序 + PO 升序 重新排列
-    normalizedRows.sort((a, b) => {
-        const asinCompare = b.asin.localeCompare(a.asin); // ASIN 降序
-        if (asinCompare !== 0) return asinCompare;
-        return a.po.localeCompare(b.po);                 // PO 升序
+    // 3. 构建【表一】矩阵分配表（基于已排好序的 normalizedRows 构建，保证顺序一致）
+    let table1List = [];
+    normalizedRows.forEach(row => {
+        let rowObj = {
+            'PO Number': row.po,
+            'PO Destination': row.poDestination,
+            'ASIN/MSKU': row.asin,
+            'Confirmed': row.confirmQty
+        };
+
+        allShipments.forEach(sName => {
+            rowObj[sName] = (row.shipmentName === sName) ? row.confirmQty : 0;
+        });
+
+        table1List.push(rowObj);
     });
-    // 保存全局结果
+
+    // 4. 构建【初始校验数据】
     processedResult.initData = normalizedRows.map(r => ({
         'PO': r.po,
         'ASIN': r.asin,
@@ -587,10 +608,11 @@ function calculateShippingTables(rawDataFiles, arnMapping) {
         'Expected date': r.expectedDate,
         'Shipment': r.shipmentName
     }));
+
+    // 5. 保存结果集
     processedResult.table1 = table1List;
     processedResult.table2 = table2Transposed;
     processedResult.summary = Array.from(summaryMap.values());
-}
 
 // ==========================================
 // 4. Tab 切换与 UI 表格渲染
