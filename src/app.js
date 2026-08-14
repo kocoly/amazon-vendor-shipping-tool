@@ -197,27 +197,22 @@ function parseExcelDate(val) {
     // 如果是数字型（Excel 序列号，如 46195）
     if (typeof val === 'number' || (!isNaN(val) && !String(val).includes('-') && !String(val).includes('/'))) {
         const num = Number(val);
+        // Excel 1900 leap year bug 转换算法
         const utc_days  = Math.floor(num - 25569);
         const utc_value = utc_days * 86400;
         const date_info = new Date(utc_value * 1000);
         return new Date(date_info.getFullYear(), date_info.getMonth(), date_info.getDate());
     }
 
+    // 普通字符串解析
     const parsedStr = String(val).replace(/\./g, '/').replace(/-/g, '/');
     const d = new Date(parsedStr);
     return isNaN(d.getTime()) ? null : d;
 }
 
-function formatDateStr(d) {
-    if (!d) return '';
-    const y = d.getFullYear();
-    const m = d.getMonth() + 1;
-    const day = d.getDate();
-    return `${y}/${m}/${day}`;
-}
-
 /**
- * 自动在 Window Start 至 Window End 范围内寻找第一个周四 (周四 getDay() === 4)
+ * 自动在 Window Start 至 Window End 范围内寻找第一个周四 (周四为 getDay() === 4)
+ * 找不到则返回空字符串 ""
  */
 function calculateExpectedThursday(windowStartVal, windowEndVal) {
     const start = parseExcelDate(windowStartVal);
@@ -228,12 +223,15 @@ function calculateExpectedThursday(windowStartVal, windowEndVal) {
     let curr = new Date(start);
     while (curr <= end) {
         if (curr.getDay() === 4) { // 找到首个周四
-            return formatDateStr(curr);
+            const y = curr.getFullYear();
+            const m = curr.getMonth() + 1;
+            const d = curr.getDate();
+            return `${y}/${m}/${d}`;
         }
         curr.setDate(curr.getDate() + 1);
     }
 
-    return '';
+    return ''; // 区间内没有周四，留空
 }
 
 /**
@@ -247,7 +245,7 @@ function calculatePallets(cartonCount, totalVol, totalWt) {
 }
 
 // ==========================================
-// 3. 核心数据协同与匹配引擎 (实现 ASIN 降序 + PO 升序双重排序)
+// 3. 核心数据协同与匹配引擎 (智能识别 PO确认 与 CA-PO)
 // ==========================================
 let processedResult = { summary: [], table1: [], table2: [], initData: [] };
 
@@ -276,7 +274,7 @@ async function processShippingData() {
         document.getElementById('downloadAllBtn').style.display = 'inline-flex';
 
         renderResultTables();
-        alert('协同计算与自动排序已完成！');
+        alert('协同计算已完成！');
     } catch (err) {
         console.error(err);
         alert('处理表格数据失败: ' + err.message);
@@ -331,6 +329,8 @@ function calculateShippingTables(rawDataFiles, arnMapping) {
         if (!rows || rows.length === 0) return;
 
         const firstRowKeys = Object.keys(rows[0]).map(k => k.trim().toLowerCase());
+        
+        // 判断特征列：如果包含 ship-to location 或 window start/end 则归类为 PO确认 表
         const isConfirmTable = firstRowKeys.some(k => k.includes('ship-to') || k.includes('window start') || k.includes('window end'));
 
         if (isConfirmTable) {
@@ -340,12 +340,13 @@ function calculateShippingTables(rawDataFiles, arnMapping) {
         }
     });
 
+    // 容错处理：若只有一个大表，则作为主表
     if (caPoRows.length === 0 && poConfirmRows.length > 0) {
         caPoRows = poConfirmRows;
     }
 
     // ----------------------------------------------------
-    // 第二步：构建 PO确认 表 Lookup Map
+    // 第二步：构建 PO确认 表的 Lookup Map (以 PO + ASIN 作为主键)
     // ----------------------------------------------------
     const poConfirmLookup = new Map();
 
@@ -361,7 +362,11 @@ function calculateShippingTables(rawDataFiles, arnMapping) {
 
         if (po) {
             const key = asin ? `${po}_${asin}` : po;
-            poConfirmLookup.set(key, { shipToLocation: shipTo, windowStart: wStart, windowEnd: wEnd });
+            poConfirmLookup.set(key, {
+                shipToLocation: shipTo,
+                windowStart: wStart,
+                windowEnd: wEnd
+            });
             if (!poConfirmLookup.has(po)) {
                 poConfirmLookup.set(po, { shipToLocation: shipTo, windowStart: wStart, windowEnd: wEnd });
             }
@@ -369,7 +374,7 @@ function calculateShippingTables(rawDataFiles, arnMapping) {
     });
 
     // ----------------------------------------------------
-    // 第三步：提取与转换基础数据
+    // 第三步：以 CA-PO 表为核心合并生成规范化初始校验数据
     // ----------------------------------------------------
     let normalizedRows = [];
 
@@ -382,6 +387,7 @@ function calculateShippingTables(rawDataFiles, arnMapping) {
 
         if (!po && !asin) return;
 
+        // VLOOKUP 匹配 PO 确认表信息
         const lookupKey = `${po}_${asin}`;
         const confirmInfo = poConfirmLookup.get(lookupKey) || poConfirmLookup.get(po) || {};
 
@@ -389,8 +395,10 @@ function calculateShippingTables(rawDataFiles, arnMapping) {
         const windowStart = confirmInfo.windowStart || lowerRow['window start'] || '';
         const windowEnd = confirmInfo.windowEnd || lowerRow['window end'] || '';
 
+        // 自动查找区间内的首个周四
         const expectedThursday = calculateExpectedThursday(windowStart, windowEnd);
 
+        // 数量与箱规计算
         const confirmQty = parseInt(lowerRow['确认数量'] || lowerRow['accepted quantity'] || lowerRow['confirmed'] || lowerRow['pcs'] || lowerRow['quantity'] || 0, 10);
         const pickUpLoc = String(lowerRow['仓库'] || lowerRow['warehouse'] || lowerRow['pick up location'] || '').trim();
 
@@ -413,9 +421,6 @@ function calculateShippingTables(rawDataFiles, arnMapping) {
             calculatedWeight = parseFloat(lowerRow['重量'] || lowerRow['total weight (lbs.)'] || 0);
         }
 
-        const dStart = parseExcelDate(windowStart);
-        const dEnd = parseExcelDate(windowEnd);
-
         normalizedRows.push({
             rowIndex: index + 2,
             po,
@@ -423,23 +428,13 @@ function calculateShippingTables(rawDataFiles, arnMapping) {
             confirmQty,
             pickUpLoc,
             poDestination: shipToLocation,
-            windowStart: formatDateStr(dStart),
-            windowEnd: formatDateStr(dEnd),
+            windowStart: windowStart ? parseExcelDate(windowStart)?.toLocaleDateString() : '',
+            windowEnd: windowEnd ? parseExcelDate(windowEnd)?.toLocaleDateString() : '',
             expectedDate: expectedThursday,
             cartons,
             calculatedVol,
             calculatedWeight
         });
-    });
-
-    // ----------------------------------------------------
-    // 核心修改：排序逻辑 -> 先对 ASIN 降序，然后对 PO 升序
-    // ----------------------------------------------------
-    normalizedRows.sort((a, b) => {
-        if (b.asin !== a.asin) {
-            return b.asin.localeCompare(a.asin); // ASIN 降序
-        }
-        return a.po.localeCompare(b.po);        // PO 升序
     });
 
     // ----------------------------------------------------
@@ -451,6 +446,7 @@ function calculateShippingTables(rawDataFiles, arnMapping) {
     normalizedRows.forEach(row => {
         let shipmentKey = `${row.pickUpLoc}||${row.poDestination}`;
 
+        // 若超期或者指定了 ARN，做特殊 Key 隔离
         if (arnMapping[row.po]) {
             shipmentKey = `ARN_${arnMapping[row.po]}`;
         }
@@ -470,6 +466,7 @@ function calculateShippingTables(rawDataFiles, arnMapping) {
 
         const currentShipment = shipmentMap.get(shipmentKey);
         row.shipmentName = currentShipment.name;
+        // 如果货件中之前没拿到 expectedDate，补齐
         if (!currentShipment.expectedDate && row.expectedDate) {
             currentShipment.expectedDate = row.expectedDate;
         }
@@ -546,7 +543,7 @@ function calculateShippingTables(rawDataFiles, arnMapping) {
     });
 
     // ----------------------------------------------------
-    // 第七步：四表汇总与初始校验数据输出
+    // 第七步：构建四表汇总与规范化初始校验数据
     // ----------------------------------------------------
     let summaryMap = new Map();
     normalizedRows.forEach(item => {
@@ -569,6 +566,13 @@ function calculateShippingTables(rawDataFiles, arnMapping) {
         }
     });
 
+  // 1. 确保在生成表格前，全局数据严格按照 ASIN 降序 + PO 升序 重新排列
+    normalizedRows.sort((a, b) => {
+        const asinCompare = b.asin.localeCompare(a.asin); // ASIN 降序
+        if (asinCompare !== 0) return asinCompare;
+        return a.po.localeCompare(b.po);                 // PO 升序
+    });
+    // 保存全局结果
     processedResult.initData = normalizedRows.map(r => ({
         'PO': r.po,
         'ASIN': r.asin,
