@@ -414,11 +414,11 @@ function calculateShippingTables(rawDataFiles, arnMapping) {
         });
     });
 
-    // ⚡【全局核心排序】：确保后面所有生成的表格都基于严格的 ASIN 降序 + PO 升序
+    // ⚡【完全对齐 Excel 顺序】：主排序 = PO 升序，次排序 = ASIN 降序
     normalizedRows.sort((a, b) => {
-        const asinCompare = b.asin.localeCompare(a.asin); // ASIN 降序
-        if (asinCompare !== 0) return asinCompare;
-        return a.po.localeCompare(b.po);                 // PO 升序
+        const poCompare = a.po.localeCompare(b.po); // 1. 先按 PO 升序 (12... -> 2Z... -> 39... -> 4X...)
+        if (poCompare !== 0) return poCompare;
+        return b.asin.localeCompare(a.asin);         // 2. PO 相同时，按 ASIN 降序
     });
 
     // 第四步： Shipment 分组合并
